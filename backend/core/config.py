@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     MAX_WORKERS: int = int(os.getenv("MAX_WORKERS", "4"))
     
     # Security
-    SECURITY_PASSWORD_SALT: str = os.getenv("SECURITY_PASSWORD_SALT", "")
+    SECURITY_PASSWORD_SALT: str = os.getenv("SECURITY_PASSWORD_SALT", secrets.token_urlsafe(32))
     
     # JWT Settings
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", secrets.token_urlsafe(32))
@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     
     # First superuser
     FIRST_SUPERUSER: str = os.getenv("FIRST_SUPERUSER", "admin@terrasim.org")
-    FIRST_SUPERUSER_PASSWORD: str = os.getenv("FIRST_SUPERUSER_PASSWORD", "changethis")
+    FIRST_SUPERUSER_PASSWORD: str = os.getenv("FIRST_SUPERUSER_PASSWORD", "")
 
     class Config:
         case_sensitive = True

@@ -47,7 +47,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def generate_password_reset_token(email: str) -> str:
     """Generate a password reset token"""
-    delta = timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS)
+    delta = timedelta(hours=1)  # Default to 1 hour
     now = datetime.utcnow()
     expires = now + delta
     exp = expires.timestamp()
