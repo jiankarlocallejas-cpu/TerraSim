@@ -694,10 +694,12 @@ const TerraSimApp: React.FC = () => {
       case 'calculator':
         return React.createElement('div', [
           React.createElement('h1', {
+            key: 'calculator-title',
             style: { fontSize: '32px', marginBottom: '8px', color: '#111827' }
           }, `Erosion Analysis ${currentProject ? `- ${currentProject.name}` : ''}`),
           
           !currentProject ? React.createElement('div', {
+            key: 'no-project-warning',
             style: {
               padding: '20px',
               background: '#fef3c7',
@@ -708,6 +710,7 @@ const TerraSimApp: React.FC = () => {
           }, 'Please create or select a project to access the erosion calculator') : null,
           
           currentProject && React.createElement(ErosionCalculator, {
+            key: 'calculator-component',
             projectId: currentProject.id,
             onResults: handleResults
           })
