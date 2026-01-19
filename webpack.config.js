@@ -2,14 +2,21 @@ const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 const webpack = require('webpack');
+const ReactRefreshWebpackPlugin = require('@pmmmwh/react-refresh-webpack-plugin');
 
 module.exports = {
   mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
   entry: './frontend/src/index.tsx',
+  experiments: {
+    outputModule: false,
+  },
   output: {
     path: path.resolve(__dirname, 'frontend/dist'),
     filename: '[name].[contenthash].js',
     clean: true,
+    environment: {
+      module: false,
+    },
   },
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
@@ -21,11 +28,11 @@ module.exports = {
     },
     fallback: {
       "fs": false,
-      "path": require.resolve("path-browserify"),
-      "crypto": require.resolve("crypto-browserify"),
-      "stream": require.resolve("stream-browserify"),
-      "buffer": require.resolve("buffer/"),
-      "util": require.resolve("util/"),
+      "path": false,
+      "crypto": false,
+      "stream": false,
+      "buffer": false,
+      "util": false,
       "process": false
     },
   },
@@ -41,6 +48,9 @@ module.exports = {
                 '@babel/preset-env',
                 '@babel/preset-react',
                 '@babel/preset-typescript'
+              ],
+              plugins: [
+                'react-refresh/babel'
               ],
             },
           },
@@ -130,12 +140,12 @@ module.exports = {
       ],
     }),
     new webpack.ProvidePlugin({
-      process: 'process/browser',
-      Buffer: ['buffer', 'Buffer'],
+      process: 'process/browser.js',
     }),
     new webpack.DefinePlugin({
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
     }),
+    new ReactRefreshWebpackPlugin(),
   ],
   devServer: {
     static: {
@@ -145,16 +155,13 @@ module.exports = {
     hot: true,
     open: true,
     historyApiFallback: true,
-    proxy: {
-      '/api': {
+    proxy: [
+      {
+        context: ['/api'],
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
-      '/ws': {
-        target: 'ws://localhost:8000',
-        ws: true,
-      },
-    },
+    ],
   },
   optimization: {
     splitChunks: {

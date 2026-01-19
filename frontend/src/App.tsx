@@ -20,10 +20,13 @@ import Settings from './pages/Settings/Settings';
 import NotFound from './pages/NotFound/NotFound';
 
 function App() {
+  console.log('App component rendering...');
   const { isAuthenticated, isLoading } = useAuth();
+  console.log('Auth state:', { isAuthenticated, isLoading });
 
   // Show loading screen while checking authentication
   if (isLoading) {
+    console.log('Showing loading screen...');
     return (
       <Box
         display="flex"
@@ -37,6 +40,8 @@ function App() {
       </Box>
     );
   }
+
+  console.log('Authentication loaded, showing routes...');
 
   // Public routes (accessible without authentication)
   const publicRoutes = (
@@ -70,6 +75,7 @@ function App() {
     </Layout>
   );
 
+  console.log('Rendering app with isAuthenticated:', isAuthenticated);
   return (
     <Box height="100vh" display="flex" flexDirection="column">
       {isAuthenticated ? protectedRoutes : publicRoutes}

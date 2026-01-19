@@ -10,226 +10,57 @@
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
-    <!-- Application Styles -->
     <style>
-        /* Loading screen styles */
-        #loading-screen {
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        #app {
+            height: 100vh;
+            background: #f0f0f0;
+        }
+        .debug-info {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
             color: white;
-        }
-        
-        .loading-spinner {
-            width: 60px;
-            height: 60px;
-            border: 4px solid rgba(255, 255, 255, 0.3);
-            border-top: 4px solid white;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 20px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .loading-text {
-            font-size: 18px;
-            font-weight: 500;
-            margin-bottom: 8px;
-        }
-        
-        .loading-subtitle {
-            font-size: 14px;
-            opacity: 0.8;
-        }
-        
-        /* Error screen styles */
-        #error-screen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #f8f9fa;
-            display: none;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
             z-index: 9999;
-            padding: 20px;
-            text-align: center;
-        }
-        
-        .error-icon {
-            font-size: 48px;
-            color: #dc3545;
-            margin-bottom: 16px;
-        }
-        
-        .error-title {
-            font-size: 24px;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 8px;
-        }
-        
-        .error-message {
-            font-size: 16px;
-            color: #6c757d;
-            margin-bottom: 24px;
-        }
-        
-        .error-actions {
-            display: flex;
-            gap: 12px;
-        }
-        
-        /* Hide loading screen when app is ready */
-        .app-ready #loading-screen {
-            display: none;
-        }
-        
-        .app-error #loading-screen {
-            display: none;
-        }
-        
-        .app-error #error-screen {
-            display: flex;
         }
     </style>
 </head>
 <body>
-    <!-- Loading Screen -->
-    <div id="loading-screen">
-        <div class="loading-spinner"></div>
-        <div class="loading-text">TerraSim</div>
-        <div class="loading-subtitle">Advanced GIS Erosion Modeling Platform</div>
-    </div>
-    
-    <!-- Error Screen -->
-    <div id="error-screen">
-        <div class="error-icon">⚠️</div>
-        <div class="error-title">Application Error</div>
-        <div class="error-message" id="error-message">
-            An error occurred while loading the application.
-        </div>
-        <div class="error-actions">
-            <button class="btn btn-primary" onclick="location.reload()">Reload</button>
-            <button class="btn btn-outline" onclick="showErrorDetails()">Show Details</button>
-        </div>
-        <div id="error-details" style="display: none; margin-top: 20px; text-align: left;">
-            <pre id="error-stack" style="background: #f8f9fa; padding: 12px; border-radius: 4px; overflow: auto;"></pre>
-        </div>
+    <!-- Debug Info -->
+    <div class="debug-info" id="debug-info">
+        Loading TerraSim...
     </div>
     
     <!-- Main Application Container -->
     <div id="app">
-        <!-- Application will be mounted here -->
+        <!-- React application will be mounted here -->
+        <div style="display: flex; align-items: center; justify-content: center; height: 100vh; font-family: Arial, sans-serif;">
+            <div style="text-align: center;">
+                <h1 style="color: #666;">⏳ Loading TerraSim...</h1>
+                <p style="color: #999;">If this message persists, there may be a JavaScript error.</p>
+            </div>
+        </div>
     </div>
     
-    <!-- Error handling -->
     <script>
-        // Global error handler
-        window.addEventListener('error', function(event) {
-            console.error('Global error:', event.error);
-            showError('Application Error', event.error?.message || 'Unknown error occurred', event.error?.stack);
-        });
+        console.log('HTML loaded successfully');
+        document.getElementById('debug-info').innerHTML = 'HTML loaded, waiting for JavaScript...';
         
-        window.addEventListener('unhandledrejection', function(event) {
-            console.error('Unhandled promise rejection:', event.reason);
-            showError('Promise Rejection', event.reason?.message || 'Unhandled promise rejection', event.reason?.stack);
-        });
-        
-        function showError(title, message, stack) {
-            document.getElementById('error-message').textContent = message;
-            if (stack) {
-                document.getElementById('error-stack').textContent = stack;
+        // Check if React loads
+        setTimeout(() => {
+            const debugEl = document.getElementById('debug-info');
+            if (debugEl) {
+                debugEl.innerHTML = 'JavaScript should be loading...';
             }
-            document.body.classList.add('app-error');
-        }
-        
-        function showErrorDetails() {
-            const details = document.getElementById('error-details');
-            details.style.display = details.style.display === 'none' ? 'block' : 'none';
-        }
-        
-        // Check for required browser features
-        function checkBrowserSupport() {
-            const requiredFeatures = [
-                'fetch',
-                'Promise',
-                'Map',
-                'Set',
-                'localStorage'
-            ];
-            
-            const missingFeatures = requiredFeatures.filter(feature => !(feature in window));
-            
-            if (missingFeatures.length > 0) {
-                showError(
-                    'Browser Not Supported',
-                    `Your browser is missing required features: ${missingFeatures.join(', ')}`,
-                    'Please update your browser to use TerraSim.'
-                );
-                return false;
-            }
-            
-            return true;
-        }
-        
-        // Initialize application
-        function initializeApp() {
-            if (!checkBrowserSupport()) {
-                return;
-            }
-            
-            try {
-                // Load the application
-                const script = document.createElement('script');
-                script.src = 'src/index.tsx';
-                script.type = 'module';
-                script.onload = function() {
-                    // App loaded successfully
-                    setTimeout(() => {
-                        document.body.classList.add('app-ready');
-                    }, 1000);
-                };
-                script.onerror = function() {
-                    // Failed to load app script
-                    showError(
-                        'Loading Error',
-                        'Failed to load the application. Please check your internet connection.',
-                        'Could not load the main application script.'
-                    );
-                };
-                document.head.appendChild(script);
-                
-            } catch (error) {
-                showError(
-                    'Initialization Error',
-                    error.message || 'Failed to initialize the application.',
-                    error.stack
-                );
-            }
-        }
-        
-        // Start initialization when DOM is ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initializeApp);
-        } else {
-            initializeApp();
-        }
+        }, 1000);
     </script>
 </body>
 </html>
