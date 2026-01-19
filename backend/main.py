@@ -46,7 +46,7 @@ app.add_middleware(
 )
 
 # Serve static files
-app.mount("/static", StaticFiles(directory="frontend/dist"), name="static")
+app.mount("/static", StaticFiles(directory="../frontend/dist"), name="static")
 
 # Pydantic Models
 class ErosionInput(BaseModel):

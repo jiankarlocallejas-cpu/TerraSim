@@ -11,12 +11,12 @@ import {
   ListItemIcon,
   ListItemText,
   IconButton,
-  useTheme,
   useMediaQuery,
   Avatar,
   Menu,
   MenuItem,
   Divider,
+  Theme,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -35,6 +35,7 @@ import {
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNotification } from '../../contexts/NotificationContext';
+import { useTheme } from '@mui/material/styles';
 
 const drawerWidth = 280;
 
