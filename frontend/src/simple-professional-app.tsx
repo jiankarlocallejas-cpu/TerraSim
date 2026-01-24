@@ -171,6 +171,7 @@ const TerrainVisualization: React.FC<{ terrainData: TerrainData[]; results?: Ero
     }
   }, [
     React.createElement('h3', {
+      key: 'terrain-title',
       style: { fontSize: '18px', marginBottom: '12px', color: '#333' }
     }, '3D Terrain Visualization'),
     React.createElement('canvas', {
@@ -254,6 +255,7 @@ const ErosionCalculator: React.FC<{ projectId?: number; onResults?: (results: Er
         }
       }, [
         React.createElement('h3', {
+          key: 'input-params-title',
           style: { fontSize: '18px', marginBottom: '16px', color: '#333' }
         }, 'Input Parameters'),
         
@@ -418,6 +420,7 @@ const ErosionCalculator: React.FC<{ projectId?: number; onResults?: (results: Er
         }
       }, [
         React.createElement('h3', {
+          key: 'results-title',
           style: { fontSize: '18px', marginBottom: '16px', color: '#333' }
         }, 'Analysis Results'),
         
@@ -532,6 +535,7 @@ const TerraSimApp: React.FC = () => {
               }
             }, [
               React.createElement('h3', {
+                key: 'active-projects-title',
                 style: { fontSize: '16px', color: '#2563eb', marginBottom: '8px' }
               }, 'Active Projects'),
               React.createElement('div', {
@@ -549,6 +553,7 @@ const TerraSimApp: React.FC = () => {
               }
             }, [
               React.createElement('h3', {
+                key: 'completed-title',
                 style: { fontSize: '16px', color: '#16a34a', marginBottom: '8px' }
               }, 'Completed'),
               React.createElement('div', {
@@ -566,6 +571,7 @@ const TerraSimApp: React.FC = () => {
               }
             }, [
               React.createElement('h3', {
+                key: 'in-progress-title',
                 style: { fontSize: '16px', color: '#ea580c', marginBottom: '8px' }
               }, 'In Progress'),
               React.createElement('div', {
@@ -583,6 +589,7 @@ const TerraSimApp: React.FC = () => {
               }
             }, [
               React.createElement('h3', {
+                key: 'backend-status-title',
                 style: { fontSize: '16px', color: backendStatus === 'connected' ? '#16a34a' : '#dc2626', marginBottom: '8px' }
               }, 'Backend Status'),
               React.createElement('div', {
@@ -668,6 +675,7 @@ const TerraSimApp: React.FC = () => {
               }
             }, [
               React.createElement('h3', {
+                key: `project-name-${project.id}`,
                 style: { fontSize: '16px', marginBottom: '8px', color: '#333' }
               }, project.name),
               React.createElement('div', {
@@ -731,6 +739,7 @@ const TerraSimApp: React.FC = () => {
   }, [
     // Sidebar Navigation
     React.createElement('div', {
+      key: 'sidebar',
       style: {
         width: '280px',
         background: 'white',
@@ -741,10 +750,11 @@ const TerraSimApp: React.FC = () => {
       }
     }, [
       React.createElement('h1', {
+        key: 'app-title',
         style: { fontSize: '20px', marginBottom: '24px', color: '#111827' }
       }, 'TerraSim'),
       
-      React.createElement('div', { style: { flexGrow: 1 } }, [
+      React.createElement('div', { key: 'nav-buttons', style: { flexGrow: 1 } }, [
         React.createElement('button', {
           key: 'dashboard-btn',
           onClick: () => setActiveSection('dashboard'),
@@ -801,12 +811,14 @@ const TerraSimApp: React.FC = () => {
       ]),
       
       React.createElement('div', {
+        key: 'backend-status',
         style: { fontSize: '12px', color: '#6b7280' }
       }, `Backend: ${backendStatus}`)
     ]),
     
     // Main Content
     React.createElement('div', {
+      key: 'main-content',
       style: {
         flex: 1,
         padding: '32px',

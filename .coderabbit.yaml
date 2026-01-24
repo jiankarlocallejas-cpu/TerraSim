@@ -1,0 +1,371 @@
+# CodeRabbit Configuration for TerraSim Project
+# Advanced GIS Erosion Modeling Platform
+
+# Language and framework configuration
+language: typescript
+framework: react
+
+# Review settings
+reviews:
+  # Enable automated reviews
+  enabled: true
+  
+  # Review frequency
+  frequency: on_push
+  
+  # Review scope
+  scope: full
+  
+  # Exclude certain files from review
+  exclude:
+    - "node_modules/**"
+    - "dist/**"
+    - "build/**"
+    - "*.min.js"
+    - "*.min.css"
+    - "package-lock.json"
+    - "yarn.lock"
+
+# Code quality checks
+quality:
+  # Enable code quality analysis
+  enabled: true
+  
+  # Minimum code quality score (0-100)
+  min_score: 80
+  
+  # Check for common issues
+  checks:
+    # TypeScript/JavaScript checks
+    typescript:
+      enabled: true
+      rules:
+        - no-unused-vars
+        - no-console
+        - prefer-const
+        - no-var
+        - eqeqeq
+        - curly
+    
+    # React specific checks
+    react:
+      enabled: true
+      rules:
+        - react-hooks-exhaustive-deps
+        - react-key-prop
+        - react-no-unknown-property
+        - react-props-missing-prop-types
+        - react-jsx-key
+    
+    # General code style
+    style:
+      enabled: true
+      rules:
+        - indent
+        - quotes
+        - semi
+        - comma-dangle
+        - max-len
+        - object-curly-spacing
+
+# Security checks
+security:
+  enabled: true
+  
+  # Check for common vulnerabilities
+  checks:
+    - sql-injection
+    - xss
+    - csrf
+    - insecure-random
+    - path-traversal
+    - command-injection
+  
+  # Dependency security scanning
+  dependencies:
+    enabled: true
+    severity: medium
+
+# Performance checks
+performance:
+  enabled: true
+  
+  # Performance metrics to check
+  metrics:
+    - bundle-size
+    - load-time
+    - memory-usage
+    - cpu-usage
+  
+  # Performance thresholds
+  thresholds:
+    bundle_size: 5MB
+    load_time: 3s
+    memory_usage: 512MB
+
+# Documentation requirements
+documentation:
+  enabled: true
+  
+  # Required documentation for functions
+  functions:
+    require_jsdoc: true
+    require_params: true
+    require_returns: true
+    require_description: true
+  
+  # Required documentation for components
+  components:
+    require_prop_types: true
+    require_default_props: true
+    require_description: true
+
+# Testing requirements
+testing:
+  enabled: true
+  
+  # Test coverage requirements
+  coverage:
+    enabled: true
+    threshold: 80
+    exclude:
+      - "*.test.*"
+      - "*.spec.*"
+      - "test/**"
+      - "tests/**"
+  
+  # Test types to run
+  types:
+    - unit
+    - integration
+    - e2e
+
+# Custom rules for TerraSim project
+custom_rules:
+  # Erosion calculation validation
+  erosion_calculation:
+    description: "Validate erosion calculation implementations"
+    pattern: "calculateErosion|calculateLocalErosion"
+    requirements:
+      - must-have-error-handling
+      - must-have-input-validation
+      - must-return-proper-type
+  
+  # 3D visualization optimization
+  visualization:
+    description: "Optimize 3D terrain visualization performance"
+    pattern: "TerrainVisualization|canvas|requestAnimationFrame"
+    requirements:
+      - must-have-cleanup
+      - must-have-performance-optimization
+      - must-have-error-handling
+  
+  # API integration validation
+  api_integration:
+    description: "Validate API integration patterns"
+    pattern: "fetch|axios|api"
+    requirements:
+      - must-have-error-handling
+      - must-have-timeout
+      - must-have-response-validation
+
+# Integration settings
+integrations:
+  # GitHub integration
+  github:
+    enabled: true
+    auto_merge: false
+    require_review: true
+    
+  # Slack notifications
+  slack:
+    enabled: false
+    webhook_url: ""
+    channels:
+      - "#development"
+      - "#code-review"
+  
+  # Jira integration
+  jira:
+    enabled: false
+    project_key: "TS"
+    auto_create_tickets: false
+
+# Review templates
+templates:
+  # Code review template
+  code_review:
+    title: "Code Review for TerraSim"
+    sections:
+      - "Summary"
+      - "Code Quality"
+      - "Security"
+      - "Performance"
+      - "Testing"
+      - "Documentation"
+      - "Recommendations"
+  
+  # Pull request template
+  pull_request:
+    title: "TerraSim Pull Request"
+    sections:
+      - "Description"
+      - "Changes Made"
+      - "Testing Done"
+      - "Breaking Changes"
+      - "Dependencies"
+      - "Screenshots (if applicable)"
+
+# Project-specific settings
+project:
+  name: "TerraSim"
+  description: "Advanced GIS Erosion Modeling Platform"
+  version: "2.0.0"
+  
+  # Project-specific exclusions
+  exclude:
+    - "backend/data/**"  # Large data files
+    - "frontend/public/**"  # Static assets
+    - "*.log"  # Log files
+    - "*.tmp"  # Temporary files
+  
+  # Project-specific includes
+  include:
+    - "frontend/src/**/*.{ts,tsx,js,jsx}"
+    - "backend/**/*.py"
+    - "docs/**/*.md"
+    - "config/**/*.yaml"
+    - "config/**/*.yml"
+
+# Team settings
+team:
+  # Required reviewers for PRs
+  required_reviewers:
+    - "backend-developer"
+    - "frontend-developer"
+    - "tech-lead"
+  
+  # Review assignment rules
+  assignment:
+    auto_assign: true
+    round_robin: true
+    max_reviewers: 3
+  
+  # Review time limits
+  time_limits:
+    initial_review: 24h
+    follow_up_review: 12h
+    max_review_time: 48h
+
+# Reporting settings
+reporting:
+  enabled: true
+  
+  # Report types
+  types:
+    - weekly_summary
+    - monthly_metrics
+    - security_audit
+    - performance_report
+  
+  # Report delivery
+  delivery:
+    email: true
+    slack: false
+    dashboard: true
+  
+  # Report recipients
+  recipients:
+    - "tech-lead@terrasim.com"
+    - "dev-team@terrasim.com"
+    - "pm@terrasim.com"
+
+# Automation settings
+automation:
+  enabled: true
+  
+  # Auto-fix settings
+  auto_fix:
+    enabled: true
+    rules:
+      - "indent"
+      - "quotes"
+      - "semi"
+      - "comma-dangle"
+    
+    # Auto-fix conditions
+    conditions:
+      - confidence_threshold: 90
+      - max_changes: 50
+      - require_approval: false
+  
+  # Scheduled tasks
+  scheduled_tasks:
+    - name: "daily_security_scan"
+      schedule: "0 2 * * *"  # 2 AM daily
+      action: "security_scan"
+    
+    - name: "weekly_performance_check"
+      schedule: "0 6 * * 1"  # 6 AM Monday
+      action: "performance_analysis"
+    
+    - name: "monthly_quality_report"
+      schedule: "0 8 1 * *"  # 8 AM on 1st of month
+      action: "quality_report"
+
+# Learning and AI settings
+ai:
+  enabled: true
+  
+  # Code suggestions
+  suggestions:
+    enabled: true
+    confidence_threshold: 85
+    max_suggestions: 5
+  
+  # Pattern recognition
+  patterns:
+    enabled: true
+    learning_rate: 0.01
+    update_frequency: weekly
+  
+  # Custom training data
+  training_data:
+    - "docs/coding-standards.md"
+    - "docs/architecture.md"
+    - "docs/api-specifications.md"
+
+# Compliance and standards
+compliance:
+  enabled: true
+  
+  # Standards to follow
+  standards:
+    - "ISO 27001"  # Information security
+    - "GDPR"       # Data protection
+    - "SOC 2"      # Security controls
+  
+  # Compliance checks
+  checks:
+    - data_privacy
+    - security_controls
+    - audit_trails
+    - documentation
+
+# Environment-specific settings
+environments:
+  development:
+    strict_mode: false
+    auto_fix: true
+    notifications: minimal
+    
+  staging:
+    strict_mode: true
+    auto_fix: false
+    notifications: important
+    
+  production:
+    strict_mode: true
+    auto_fix: false
+    notifications: critical
+    require_approval: true
