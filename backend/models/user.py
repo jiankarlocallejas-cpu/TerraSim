@@ -2,9 +2,9 @@ from sqlalchemy import Boolean, String, DateTime, JSON
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime
 from typing import Optional
-from .base import Base, BaseModel
+from .base import BaseModel
 
-class User(Base, BaseModel):
+class User(BaseModel):
     __tablename__ = "users"
 
     email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)

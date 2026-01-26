@@ -1,9 +1,9 @@
 from sqlalchemy import String, Float, ForeignKey
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from typing import Optional
-from .base import Base, BaseModel
+from .base import BaseModel
 
-class Raster(Base, BaseModel):
+class Raster(BaseModel):
     __tablename__ = "rasters"
 
     name: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)

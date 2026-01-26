@@ -5,7 +5,7 @@ from sqlalchemy import String, Text, Float, ForeignKey, DateTime
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
-from .base import Base, BaseModel
+from .base import BaseModel
 
 if TYPE_CHECKING:
     from .analysis import Analysis
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .user import User
 
 
-class AnalysisMetrics(Base, BaseModel):
+class AnalysisMetrics(BaseModel):
     """
     Stores detailed analysis metrics including:
     - Sensitivity analysis results

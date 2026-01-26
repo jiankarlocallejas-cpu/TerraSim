@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models.raster import Raster
 from schemas.raster import RasterCreate, RasterUpdate, RasterStats
-from data_service import BaseDataService
+from services.data_service import BaseDataService
 import rasterio
 import numpy as np
 

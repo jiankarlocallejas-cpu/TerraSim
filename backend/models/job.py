@@ -2,9 +2,9 @@ from sqlalchemy import String, Text, ForeignKey, DateTime
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime
 from typing import Optional
-from .base import Base, BaseModel
+from .base import BaseModel
 
-class Job(Base, BaseModel):
+class Job(BaseModel):
     __tablename__ = "jobs"
 
     name: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)

@@ -1,9 +1,9 @@
 from sqlalchemy import String, Text, ForeignKey
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from typing import Optional
-from .base import Base, BaseModel
+from .base import BaseModel
 
-class Project(Base, BaseModel):
+class Project(BaseModel):
     __tablename__ = "projects"
 
     name: Mapped[str] = mapped_column(String, index=True, nullable=False)

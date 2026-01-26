@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models.pointcloud import PointCloud
 from schemas.pointcloud import PointCloudCreate, PointCloudUpdate, PointCloudStats
-from data_service import BaseDataService
+from services.data_service import BaseDataService
 import numpy as np
 
 logger = logging.getLogger(__name__)
