@@ -1,11 +1,18 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, scoped_session
+import sys
+from pathlib import Path
+
+# Add backend directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from core.config import settings
+from models.base import Base
 
 # Create database engine
 engine = create_engine(
-    settings.DATABASE_URI,
+    str(settings.DATABASE_URI),  # Convert PostgresDsn to string
     pool_pre_ping=True,
     pool_size=20,
     max_overflow=10,

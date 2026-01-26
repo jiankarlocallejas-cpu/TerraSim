@@ -1,6 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
+import sys
+from pathlib import Path
+
+# Add backend directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from db.session import get_db
 from schemas.project import Project, ProjectCreate, ProjectUpdate, ProjectWithDetails

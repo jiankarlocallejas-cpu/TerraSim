@@ -1,0 +1,44 @@
+{
+  "name": "Sample Erosion Study",
+  "description": "Example layout with DEM and regional base map for erosion modeling",
+  "created": "2025-01-26T10:00:00",
+  "modified": "2025-01-26T10:00:00",
+  "layers": [
+    {
+      "name": "DEM",
+      "layer_type": "dem",
+      "file_path": "sample_data/dem_example.tif",
+      "file_format": "tif",
+      "visible": true,
+      "opacity": 1.0,
+      "metadata": {
+        "source": "USGS",
+        "resolution": "30m",
+        "projection": "WGS84"
+      }
+    },
+    {
+      "name": "Regional Boundaries",
+      "layer_type": "base_map",
+      "file_path": "sample_data/regions.shp",
+      "file_format": "shp",
+      "visible": true,
+      "opacity": 0.5,
+      "metadata": {
+        "source": "Administrative boundaries",
+        "type": "vector"
+      }
+    }
+  ],
+  "default_parameters": {
+    "rainfall_erosivity": 350.0,
+    "soil_erodibility": 0.33,
+    "cover_factor": 0.28,
+    "practice_factor": 0.52
+  },
+  "viewport": {
+    "center_x": 0,
+    "center_y": 0,
+    "zoom": 1.0
+  }
+}

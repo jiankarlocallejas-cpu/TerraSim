@@ -28,7 +28,7 @@ class Project(ProjectBase):
     owner_id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ProjectWithDetails(Project):

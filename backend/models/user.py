@@ -1,19 +1,21 @@
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, JSON
-from sqlalchemy.orm import relationship
-from .base import Base
+from sqlalchemy import Boolean, String, DateTime, JSON
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from datetime import datetime
+from typing import Optional
+from .base import Base, BaseModel
 
-class User(Base):
+class User(Base, BaseModel):
     __tablename__ = "users"
 
-    email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    full_name = Column(String, index=True)
-    is_active = Column(Boolean(), default=True)
-    is_superuser = Column(Boolean(), default=False)
-    last_login = Column(DateTime(timezone=True))
-    preferences = Column(JSON, default=dict)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    preferences: Mapped[dict] = mapped_column(JSON, default=dict)
 
     # Relationships
-    projects = relationship("Project", back_populates="owner")
-    jobs = relationship("Job", back_populates="owner")
-    analyses = relationship("Analysis", back_populates="owner")
+    projects: Mapped[list] = relationship("Project", back_populates="owner")
+    jobs: Mapped[list] = relationship("Job", back_populates="owner")
+    analyses: Mapped[list] = relationship("Analysis", back_populates="owner")

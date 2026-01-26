@@ -24,7 +24,7 @@ def create_build_dirs():
 
 def build_backend():
     """Build Python backend executable using PyInstaller"""
-    print("🔧 Building Python backend...")
+    print("[CONFIG] Building Python backend...")
     
     spec_file = f"""
 # -*- mode: python ; coding: utf-8 -*-
@@ -97,10 +97,10 @@ exe = EXE(
             '--clean', 
             str(spec_path)
         ], check=True, cwd=PROJECT_ROOT)
-        print("✅ Backend built successfully!")
+        print("[OK] Backend built successfully!")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ Backend build failed: {e}")
+        print(f"[ERROR] Backend build failed: {e}")
         return False
 
 def build_frontend():
@@ -113,10 +113,10 @@ def build_frontend():
         
         # Build for production
         subprocess.run(['npm', 'run', 'build'], check=True, cwd=PROJECT_ROOT)
-        print("✅ Frontend built successfully!")
+        print("[OK] Frontend built successfully!")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ Frontend build failed: {e}")
+        print(f"[ERROR] Frontend build failed: {e}")
         return False
 
 def build_electron():
@@ -129,10 +129,10 @@ def build_electron():
         
         # Build Electron app
         subprocess.run(['npm', 'run', 'build'], check=True, cwd=ELECTRON_DIR)
-        print("✅ Electron app built successfully!")
+        print("[OK] Electron app built successfully!")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ Electron build failed: {e}")
+        print(f"[ERROR] Electron build failed: {e}")
         return False
 
 def build_pyqt():
@@ -208,10 +208,10 @@ exe = EXE(
             '--clean', 
             str(spec_path)
         ], check=True, cwd=PROJECT_ROOT)
-        print("✅ PyQt5 app built successfully!")
+        print("[OK] PyQt5 app built successfully!")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ PyQt5 build failed: {e}")
+        print(f"[ERROR] PyQt5 build failed: {e}")
         return False
 
 def create_installer():
@@ -247,15 +247,15 @@ SectionEnd
             with open(nsis_path, 'w') as f:
                 f.write(nsis_script)
             
-            print("📝 NSIS installer script created")
+            print("[NOTE] NSIS installer script created")
             print("🔨 Run with: makensis installer.nsi")
             
         except Exception as e:
-            print(f"⚠️ Could not create NSIS installer: {e}")
+            print(f"[WARN] Could not create NSIS installer: {e}")
 
 def main():
     """Main build process"""
-    print("🚀 Starting TerraSim build process...")
+    print("STARTING TERRASIM BUILD PROCESS...")
     
     create_build_dirs()
     
@@ -283,10 +283,10 @@ def main():
     
     if success:
         print("\n🎉 Build completed successfully!")
-        print("📁 Check the 'dist' folder for executables")
+        print("[FOLDER] Check the 'dist' folder for executables")
     else:
-        print("\n❌ Build completed with errors")
-        print("🔧 Check the logs above for details")
+        print("\n[ERROR] Build completed with errors")
+        print("[CONFIG] Check the logs above for details")
 
 if __name__ == "__main__":
     main()

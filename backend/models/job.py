@@ -1,23 +1,25 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, JSON, Enum, DateTime
-from sqlalchemy.orm import relationship
-from .base import Base
+from sqlalchemy import String, Text, ForeignKey, DateTime
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from datetime import datetime
+from typing import Optional
+from .base import Base, BaseModel
 
-class Job(Base):
+class Job(Base, BaseModel):
     __tablename__ = "jobs"
 
-    name = Column(String, index=True)
-    description = Column(Text)
-    status = Column(String, default="pending")  # pending, running, completed, failed, cancelled
-    progress = Column(Integer, default=0)  # 0-100
-    logs = Column(Text)
-    parameters = Column(JSON, default=dict)
-    result = Column(JSON, default=dict)
-    started_at = Column(DateTime(timezone=True))
-    completed_at = Column(DateTime(timezone=True))
-    job_type = Column(String)  # pointcloud_processing, raster_analysis, etc.
-    analysis_id = Column(Integer, ForeignKey("analyses.id"), nullable=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending, running, completed, failed, cancelled
+    progress: Mapped[int] = mapped_column(default=0)  # 0-100
+    logs: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parameters: Mapped[dict] = mapped_column(String, default=dict)
+    result: Mapped[dict] = mapped_column(String, default=dict)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    job_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # pointcloud_processing, raster_analysis, etc.
+    analysis_id: Mapped[Optional[int]] = mapped_column(ForeignKey("analyses.id"), nullable=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
 
     # Relationships
-    analysis = relationship("Analysis", back_populates="jobs")
-    owner = relationship("User", back_populates="jobs")
+    analysis: Mapped["Analysis"] = relationship("Analysis", back_populates="jobs")
+    owner: Mapped["User"] = relationship("User", back_populates="jobs")

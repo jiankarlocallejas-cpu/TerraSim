@@ -5,6 +5,8 @@ from core.config import settings
 from .session import engine, Base
 from models.user import User
 from models.project import Project
+from models.erosion_result import ErosionResult
+from models.analysis_metrics import AnalysisMetrics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

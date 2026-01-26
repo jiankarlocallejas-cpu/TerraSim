@@ -6,6 +6,8 @@ from .raster import Raster, RasterCreate, RasterUpdate, RasterProcess, RasterSta
 from .analysis import Analysis, AnalysisCreate, AnalysisUpdate, AnalysisResult, ErosionAnalysisParameters, ErosionAnalysisResults
 from .job import Job, JobCreate, JobUpdate, JobStatus
 from .model import Model, ModelCreate, ModelUpdate, ModelPrediction, ModelTraining, ModelMetrics
+from .erosion_result import ErosionResultCreate, ErosionResultUpdate, ErosionResultInDB, ErosionResultResponse
+from .analysis_metrics import AnalysisMetricsCreate, AnalysisMetricsUpdate, AnalysisMetricsInDB, AnalysisMetricsResponse, SensitivityAnalysisRequest, CorrelationAnalysisRequest, UncertaintyAnalysisRequest
 
 __all__ = [
     "User", "UserCreate", "UserUpdate", "UserInDB",
@@ -15,5 +17,8 @@ __all__ = [
     "Raster", "RasterCreate", "RasterUpdate", "RasterProcess", "RasterStats",
     "Analysis", "AnalysisCreate", "AnalysisUpdate", "AnalysisResult", "ErosionAnalysisParameters", "ErosionAnalysisResults",
     "Job", "JobCreate", "JobUpdate", "JobStatus",
-    "Model", "ModelCreate", "ModelUpdate", "ModelPrediction", "ModelTraining", "ModelMetrics"
+    "Model", "ModelCreate", "ModelUpdate", "ModelPrediction", "ModelTraining", "ModelMetrics",
+    "ErosionResultCreate", "ErosionResultUpdate", "ErosionResultInDB", "ErosionResultResponse",
+    "AnalysisMetricsCreate", "AnalysisMetricsUpdate", "AnalysisMetricsInDB", "AnalysisMetricsResponse",
+    "SensitivityAnalysisRequest", "CorrelationAnalysisRequest", "UncertaintyAnalysisRequest",
 ]

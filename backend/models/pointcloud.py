@@ -1,21 +1,22 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, JSON, Enum
-from sqlalchemy.orm import relationship
-from .base import Base
+from sqlalchemy import String, Float, ForeignKey
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from typing import Optional
+from .base import Base, BaseModel
 
-class PointCloud(Base):
+class PointCloud(Base, BaseModel):
     __tablename__ = "pointclouds"
 
-    name = Column(String, index=True)
-    file_path = Column(String, nullable=False)
-    file_size = Column(Integer)  # in bytes
-    point_count = Column(Integer)
-    bounds = Column(JSON)  # {"minx": float, "miny": float, "maxx": float, "maxy": float, "minz": float, "maxz": float}
-    srs = Column(String)  # Spatial Reference System
-    metadata = Column(JSON, default=dict)
-    status = Column(String, default="uploaded")  # uploaded, processing, processed, error
-    project_id = Column(Integer, ForeignKey("projects.id"))
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    file_size: Mapped[Optional[int]] = mapped_column(nullable=True)  # in bytes
+    point_count: Mapped[Optional[int]] = mapped_column(nullable=True)
+    bounds: Mapped[dict] = mapped_column(String, default=dict)  # {"minx": float, "miny": float, "maxx": float, "maxy": float, "minz": float, "maxz": float}
+    srs: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Spatial Reference System
+    pointcloud_metadata: Mapped[dict] = mapped_column(String, default=dict)
+    status: Mapped[str] = mapped_column(String, default="uploaded")  # uploaded, processing, processed, error
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
 
     # Relationships
-    project = relationship("Project", back_populates="pointclouds")
-    owner = relationship("User")
+    project: Mapped["Project"] = relationship("Project", back_populates="pointclouds")
+    owner: Mapped["User"] = relationship("User")
