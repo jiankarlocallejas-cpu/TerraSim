@@ -14,15 +14,16 @@ from typing import Optional, cast, Dict, Any
 from datetime import datetime
 
 # GIS and data handling
-import geopandas as gpd
+import geopandas as gpd  # type: ignore
+import rasterio  # type: ignore
 
 # Visualization imports for 2D and 3D
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.cm as cm
-from matplotlib.colors import Normalize
+import matplotlib.pyplot as plt  # type: ignore
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg  # type: ignore
+from matplotlib.figure import Figure  # type: ignore
+from mpl_toolkits.mplot3d import Axes3D  # type: ignore
+import matplotlib.cm as cm  # type: ignore
+from matplotlib.colors import Normalize  # type: ignore
 
 # Additional visualization
 try:
@@ -66,383 +67,558 @@ class MainWindow(tk.Tk):
         logger.info("Initializing TerraSim Main Window")
         
         self._create_main_ui()
-        self._create_menu()
-    
-    def _create_menu(self):
-        """Create application menu bar"""
-        menubar = tk.Menu(self)
-        self.config(menu=menubar)
-        
-        # File menu
-        file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Load DEM", command=self.load_dem)
-        file_menu.add_command(label="Load Base Map", command=self.load_map)
-        file_menu.add_command(label="Load Parameters", command=self.load_parameters)
-        file_menu.add_separator()
-        file_menu.add_command(label="Save Layout", command=self.save_layout)
-        file_menu.add_command(label="Load Layout", command=self.load_layout)
-        file_menu.add_command(label="Manage Layouts", command=self.manage_layouts)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.quit)
-        
-        # Simulation menu
-        sim_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Simulation", menu=sim_menu)
-        sim_menu.add_command(label="Single Run", command=self.run_single_simulation)
-        sim_menu.add_command(label="Time Series", command=self.run_time_series)
-        sim_menu.add_command(label="Sensitivity Analysis", command=self.run_sensitivity)
-        sim_menu.add_separator()
-        sim_menu.add_command(label="Clear History", command=self.clear_history)
-        
-        # Workflow menu
-        workflow_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Workflow", menu=workflow_menu)
-        workflow_menu.add_command(label="USPED Workflow", command=self.run_usped_workflow)
-        workflow_menu.add_command(label="Workflow Documentation", command=self.show_workflow_docs)
-        
-        # Visualization menu
-        viz_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Visualization", menu=viz_menu)
-        viz_menu.add_command(label="DEM 3D Surface", command=self.visualize_dem_3d)
-        viz_menu.add_command(label="Erosion 3D Surface", command=self.visualize_erosion_3d)
-        viz_menu.add_command(label="Interactive 3D (Plotly)", command=self.create_interactive_3d_plot)
-        
-        # Help menu
-        help_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Help", menu=help_menu)
-        help_menu.add_command(label="About TerraSim", command=self.show_about)
-        help_menu.add_command(label="Documentation", command=self.show_documentation)
     
     def _create_main_ui(self):
-        """Create main UI layout"""
-        # Top toolbar
-        toolbar_frame = tk.Frame(self, bg='#34495e', height=50)
-        toolbar_frame.pack(fill=tk.X, padx=0, pady=0)
-        toolbar_frame.pack_propagate(False)
+        """Create main UI layout with QGIS-like interface"""
+        # Color scheme - Modern dark theme with cyan accents
+        self.primary_color = '#1e1e2e'
+        self.secondary_color = '#2d2d44'
+        self.accent_color = '#00d4ff'
+        self.text_color = '#ffffff'
+        self.bg_light = '#f5f5f5'
+        
+        # Top menu bar
+        self._create_menu_bar()
+        
+        # Ribbon toolbar system
+        self._create_ribbon_toolbar()
+        
+        # Main content area with panels
+        main_container = tk.Frame(self, bg=self.primary_color)
+        main_container.pack(fill=tk.BOTH, expand=True)
+        
+        # Left sidebar (Layers & Tools)
+        left_panel = tk.Frame(main_container, bg=self.secondary_color, width=280)
+        left_panel.pack(side=tk.LEFT, fill=tk.BOTH, padx=0, pady=0)
+        left_panel.pack_propagate(False)
+        self._create_left_panel(left_panel)
+        
+        # Center canvas area
+        center_area = tk.Frame(main_container, bg=self.primary_color)
+        center_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.content_frame = tk.Frame(center_area, bg='white', relief=tk.SUNKEN, bd=1)
+        self.content_frame.pack(fill=tk.BOTH, expand=True)
+        self._show_welcome_screen()
+        
+        # Right sidebar (Properties & Inspector)
+        right_panel = tk.Frame(main_container, bg=self.secondary_color, width=300)
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, padx=0, pady=0)
+        right_panel.pack_propagate(False)
+        self._create_right_panel(right_panel)
+        
+        # Status bar
+        self._create_status_bar()
+    
+    def _create_menu_bar(self):
+        """Create modern menu bar"""
+        menubar_frame = tk.Frame(self, bg=self.secondary_color, height=30)
+        menubar_frame.pack(fill=tk.X, padx=0, pady=0)
+        menubar_frame.pack_propagate(False)
+        
+        # Menu buttons
+        menu_items = [
+            ('File', self._create_file_menu),
+            ('Data', self._create_data_menu),
+            ('Simulation', self._create_simulation_menu),
+            ('Analysis', self._create_analysis_menu),
+            ('Visualization', self._create_visualization_menu),
+            ('Tools', self._create_tools_menu),
+            ('Help', self._create_help_menu),
+        ]
+        
+        for label, menu_func in menu_items:
+            self._create_menu_button(menubar_frame, label, menu_func)
+    
+    def _create_menu_button(self, parent, label, menu_func):
+        """Create a menu button with dropdown"""
+        btn = tk.Button(
+            parent,
+            text=label,
+            font=("Arial", 9, "bold"),
+            bg=self.secondary_color,
+            fg=self.text_color,
+            relief=tk.FLAT,
+            padx=12,
+            pady=5,
+            command=menu_func
+        )
+        btn.pack(side=tk.LEFT, padx=2)
+        
+        btn.bind('<Enter>', lambda e: btn.config(bg=self.accent_color, fg=self.primary_color))
+        btn.bind('<Leave>', lambda e: btn.config(bg=self.secondary_color, fg=self.text_color))
+    
+    def _create_file_menu(self):
+        """Create File menu"""
+        menubar = tk.Menu(self, tearoff=1, bg=self.secondary_color, fg=self.text_color, activebackground=self.accent_color)
+        menubar.add_command(label="📁 Load DEM", command=self.load_dem)
+        menubar.add_command(label="📂 Load Base Map", command=self.load_map)
+        menubar.add_command(label="⚙️  Load Parameters", command=self.load_parameters)
+        menubar.add_command(label="✏️  Edit Parameters", command=self.edit_parameters)
+        menubar.add_command(label="📋 Default Parameters", command=self.load_default_parameters)
+        menubar.add_separator()
+        menubar.add_command(label="💾 Save Layout", command=self.save_layout)
+        menubar.add_command(label="📥 Load Layout", command=self.load_layout)
+        menubar.add_separator()
+        menubar.add_command(label="❌ Exit", command=self.quit)
+        menubar.post(self.winfo_pointerx(), self.winfo_pointery())
+    
+    def _create_data_menu(self):
+        """Create Data menu"""
+        menubar = tk.Menu(self, tearoff=1, bg=self.secondary_color, fg=self.text_color, activebackground=self.accent_color)
+        menubar.add_command(label="🗺️  Generate Sample DEM", command=self.generate_sample_dem)
+        menubar.add_command(label="📊 Load Raster", command=self.load_map)
+        menubar.add_command(label="🎯 Load Shapefile", command=self.load_shapefile)
+        menubar.add_separator()
+        menubar.add_command(label="🔄 Reproject", command=self.show_reproject_dialog)
+        menubar.add_command(label="✂️  Clip", command=self.show_clip_dialog)
+        menubar.post(self.winfo_pointerx(), self.winfo_pointery())
+    
+    def _create_simulation_menu(self):
+        """Create Simulation menu"""
+        menubar = tk.Menu(self, tearoff=1, bg=self.secondary_color, fg=self.text_color, activebackground=self.accent_color)
+        menubar.add_command(label="▶️  Single Run", command=self.run_single_simulation)
+        menubar.add_command(label="📈 Time Series", command=self.run_time_series)
+        menubar.add_command(label="🔬 Sensitivity Analysis", command=self.run_sensitivity)
+        menubar.add_separator()
+        menubar.add_command(label="🚀 USPED Workflow", command=self.run_usped_workflow)
+        menubar.post(self.winfo_pointerx(), self.winfo_pointery())
+    
+    def _create_analysis_menu(self):
+        """Create Analysis menu"""
+        menubar = tk.Menu(self, tearoff=1, bg=self.secondary_color, fg=self.text_color, activebackground=self.accent_color)
+        menubar.add_command(label="📐 Slope Analysis", command=self.slope_analysis)
+        menubar.add_command(label="🌊 Flow Accumulation", command=self.flow_analysis)
+        menubar.add_command(label="⛰️  Aspect", command=self.aspect_analysis)
+        menubar.add_separator()
+        menubar.add_command(label="📊 Statistics", command=self.show_statistics)
+        menubar.post(self.winfo_pointerx(), self.winfo_pointery())
+    
+    def _create_visualization_menu(self):
+        """Create Visualization menu"""
+        menubar = tk.Menu(self, tearoff=1, bg=self.secondary_color, fg=self.text_color, activebackground=self.accent_color)
+        menubar.add_command(label="🗻 DEM 3D Surface", command=self.visualize_dem_3d)
+        menubar.add_command(label="🌍 Erosion 3D", command=self.visualize_erosion_3d)
+        menubar.add_command(label="💫 Interactive 3D (Plotly)", command=self.create_interactive_3d_plot)
+        menubar.add_separator()
+        menubar.add_command(label="🎨 Styling", command=self.show_styling_dialog)
+        menubar.post(self.winfo_pointerx(), self.winfo_pointery())
+    
+    def _create_tools_menu(self):
+        """Create Tools menu"""
+        menubar = tk.Menu(self, tearoff=1, bg=self.secondary_color, fg=self.text_color, activebackground=self.accent_color)
+        menubar.add_command(label="🔍 Measure", command=self.show_measure_tool)
+        menubar.add_command(label="✏️  Annotate", command=self.show_annotate_tool)
+        menubar.add_separator()
+        menubar.add_command(label="⚙️  Preferences", command=self.show_preferences)
+        menubar.post(self.winfo_pointerx(), self.winfo_pointery())
+    
+    def _create_help_menu(self):
+        """Create Help menu"""
+        menubar = tk.Menu(self, tearoff=1, bg=self.secondary_color, fg=self.text_color, activebackground=self.accent_color)
+        menubar.add_command(label="📖 Documentation", command=self.show_documentation)
+        menubar.add_command(label="❓ About TerraSim", command=self.show_about)
+        menubar.post(self.winfo_pointerx(), self.winfo_pointery())
+    
+    def _create_ribbon_toolbar(self):
+        """Create ribbon toolbar system inspired by QGIS"""
+        ribbon_frame = tk.Frame(self, bg=self.secondary_color, height=100)
+        ribbon_frame.pack(fill=tk.X, padx=0, pady=0)
+        ribbon_frame.pack_propagate(False)
+        
+        # Ribbon title
+        title_frame = tk.Frame(ribbon_frame, bg=self.secondary_color)
+        title_frame.pack(fill=tk.X, side=tk.TOP, padx=10, pady=(8, 5))
         
         tk.Label(
-            toolbar_frame,
-            text="TerraSim - Erosion Modeling System",
-            font=("Arial", 14, "bold"),
-            bg='#34495e',
-            fg='white'
-        ).pack(side=tk.LEFT, padx=20, pady=10)
+            title_frame,
+            text="TerraSim - Advanced Erosion Modeling System",
+            font=("Arial", 11, "bold"),
+            bg=self.secondary_color,
+            fg=self.accent_color
+        ).pack(side=tk.LEFT)
         
-        # Main container with sidebar and content
-        main_container = tk.Frame(self, bg='#f0f0f0')
-        main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Ribbon groups
+        groups_frame = tk.Frame(ribbon_frame, bg=self.secondary_color)
+        groups_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Sidebar
-        self.sidebar = tk.Frame(main_container, bg='white', width=250, relief=tk.SUNKEN, bd=1)
-        self.sidebar.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 10))
-        self.sidebar.pack_propagate(False)
+        # File & Data group
+        self._create_ribbon_group(groups_frame, "FILE & DATA", [
+            ("Load DEM", self.load_dem, "📁"),
+            ("Load Map", self.load_map, "📂"),
+            ("Sample", self.generate_sample_dem, "🎲"),
+        ])
         
-        self._create_sidebar()
+        # Simulation group
+        self._create_ribbon_group(groups_frame, "SIMULATION", [
+            ("Single Run", self.run_single_simulation, "▶️"),
+            ("Time Series", self.run_time_series, "📈"),
+            ("Sensitivity", self.run_sensitivity, "🔬"),
+        ])
         
-        # Content area
-        self.content_frame = tk.Frame(main_container, bg='white', relief=tk.SUNKEN, bd=1)
-        self.content_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        # Visualization group
+        self._create_ribbon_group(groups_frame, "VISUALIZATION", [
+            ("DEM 3D", self.visualize_dem_3d, "🗻"),
+            ("Erosion 3D", self.visualize_erosion_3d, "🌍"),
+            ("Plotly", self.create_interactive_3d_plot, "💫"),
+        ])
         
-        # Welcome screen
-        self._show_welcome_screen()
+        # Analysis group
+        self._create_ribbon_group(groups_frame, "ANALYSIS", [
+            ("Slope", self.slope_analysis, "📐"),
+            ("Flow", self.flow_analysis, "🌊"),
+            ("Aspect", self.aspect_analysis, "⛰️"),
+        ])
+        
+        # Parameters group
+        self._create_ribbon_group(groups_frame, "PARAMETERS", [
+            ("Load", self.load_parameters, "📥"),
+            ("Edit", self.edit_parameters, "✏️"),
+            ("Default", self.load_default_parameters, "📋"),
+        ])
     
-    def _create_sidebar(self):
-        """Create sidebar with quick access"""
-        # Title
-        title_label = tk.Label(
-            self.sidebar,
-            text="QUICK ACCESS",
-            font=("Arial", 12, "bold"),
-            bg='white',
-            fg='#2c3e50'
+    def _create_ribbon_group(self, parent, group_name, buttons):
+        """Create a ribbon group with buttons"""
+        group_frame = tk.LabelFrame(
+            parent,
+            text=group_name,
+            font=("Arial", 8, "bold"),
+            bg=self.secondary_color,
+            fg=self.accent_color,
+            padx=8,
+            pady=6,
+            relief=tk.FLAT
         )
-        title_label.pack(anchor=tk.W, padx=15, pady=(15, 10))
+        group_frame.pack(side=tk.LEFT, padx=3, fill=tk.BOTH)
         
-        # DEM section
-        dem_frame = tk.LabelFrame(
-            self.sidebar,
-            text="Digital Elevation Model",
-            font=("Arial", 10, "bold"),
-            bg='white',
-            fg='#2c3e50',
-            padx=10,
-            pady=10
-        )
-        dem_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        for label, command, icon in buttons:
+            btn = tk.Button(
+                group_frame,
+                text=f"{icon}\n{label}",
+                font=("Arial", 7),
+                bg='#3d3d5c',
+                fg=self.text_color,
+                relief=tk.FLAT,
+                padx=12,
+                pady=8,
+                command=command,
+                wraplength=60
+            )
+            btn.pack(side=tk.LEFT, padx=2, fill=tk.BOTH, expand=True)
+            
+            btn.bind('<Enter>', lambda e, b=btn: b.config(bg=self.accent_color, fg=self.primary_color))
+            btn.bind('<Leave>', lambda e, b=btn: b.config(bg='#3d3d5c', fg=self.text_color))
+    
+    def _create_left_panel(self, parent):
+        """Create left panel with Layers and Tools"""
+        # Header
+        header = tk.Frame(parent, bg=self.accent_color)
+        header.pack(fill=tk.X, padx=0, pady=0)
+        
+        tk.Label(
+            header,
+            text="LAYERS & TOOLS",
+            font=("Arial", 9, "bold"),
+            bg=self.accent_color,
+            fg=self.primary_color
+        ).pack(fill=tk.X, padx=10, pady=8)
+        
+        # Notebook for tabs
+        notebook = ttk.Notebook(parent)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Style the notebook
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TNotebook', background=self.secondary_color)
+        style.configure('TNotebook.Tab', font=("Arial", 8))
+        
+        # Layers tab
+        layers_frame = tk.Frame(notebook, bg=self.secondary_color)
+        notebook.add(layers_frame, text="📚 Layers")
+        self._create_layers_tab(layers_frame)
+        
+        # Tools tab
+        tools_frame = tk.Frame(notebook, bg=self.secondary_color)
+        notebook.add(tools_frame, text="🔧 Tools")
+        self._create_tools_tab(tools_frame)
+        
+        # History tab
+        history_frame = tk.Frame(notebook, bg=self.secondary_color)
+        notebook.add(history_frame, text="📝 History")
+        self._create_history_tab(history_frame)
+    
+    def _create_layers_tab(self, parent):
+        """Create layers panel"""
+        # Add layer button
+        btn_frame = tk.Frame(parent, bg=self.secondary_color)
+        btn_frame.pack(fill=tk.X, padx=5, pady=5)
         
         tk.Button(
-            dem_frame,
-            text="Load DEM",
-            font=("Arial", 9),
-            bg='#3498db',
-            fg='white',
-            padx=15,
-            pady=8,
+            btn_frame,
+            text="+ Add Layer",
+            font=("Arial", 8, "bold"),
+            bg=self.accent_color,
+            fg=self.primary_color,
+            relief=tk.FLAT,
+            padx=10,
+            pady=4,
             command=self.load_dem
-        ).pack(fill=tk.X, pady=5)
-        
-        tk.Button(
-            dem_frame,
-            text="Generate Sample",
-            font=("Arial", 9),
-            bg='#95a5a6',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.generate_sample_dem
         ).pack(fill=tk.X)
         
-        self.dem_status = tk.Label(
-            dem_frame,
-            text="Status: No DEM loaded",
-            font=("Arial", 8),
+        # Layers listbox
+        self.layers_listbox = tk.Listbox(
+            parent,
             bg='white',
-            fg='#7f8c8d'
-        )
-        self.dem_status.pack(anchor=tk.W, pady=(10, 0))
-        
-        # Map section
-        map_frame = tk.LabelFrame(
-            self.sidebar,
-            text="Base Map Layer",
-            font=("Arial", 10, "bold"),
-            bg='white',
-            fg='#2c3e50',
-            padx=10,
-            pady=10
-        )
-        map_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        
-        tk.Button(
-            map_frame,
-            text="Load Map",
+            fg=self.primary_color,
             font=("Arial", 9),
-            bg='#1abc9c',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.load_map
-        ).pack(fill=tk.X, pady=5)
-        
-        self.map_status = tk.Label(
-            map_frame,
-            text="Status: No map loaded",
-            font=("Arial", 8),
-            bg='white',
-            fg='#7f8c8d'
+            selectmode=tk.MULTIPLE,
+            relief=tk.FLAT
         )
-        self.map_status.pack(anchor=tk.W, pady=(5, 0))
+        self.layers_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Parameters section
-        params_frame = tk.LabelFrame(
-            self.sidebar,
-            text="Simulation Parameters",
-            font=("Arial", 10, "bold"),
-            bg='white',
-            fg='#2c3e50',
-            padx=10,
-            pady=10
-        )
-        params_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        # Add sample layers
+        for layer in ["Base Map", "DEM", "Erosion Model", "Results"]:
+            self.layers_listbox.insert(tk.END, f"  {layer}")
+    
+    def _create_tools_tab(self, parent):
+        """Create tools panel"""
+        tools_list = [
+            ("🔍 Selection Tool", self.select_tool),
+            ("✏️  Edit Tool", self.edit_tool),
+            ("🔍 Measure Tool", self.show_measure_dialog),
+            ("✋ Pan Tool", self.pan_tool),
+            ("🔎 Zoom In", self.zoom_in),
+            ("🔍 Zoom Out", self.zoom_out),
+            ("🏠 Fit to View", self.fit_to_view),
+        ]
         
-        tk.Button(
-            params_frame,
-            text="Load Parameters",
-            font=("Arial", 9),
-            bg='#9b59b6',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.load_parameters
-        ).pack(fill=tk.X, pady=5)
-        
-        tk.Button(
-            params_frame,
-            text="Edit Parameters",
-            font=("Arial", 9),
-            bg='#8e44ad',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.edit_parameters
-        ).pack(fill=tk.X, pady=5)
-        
-        tk.Button(
-            params_frame,
-            text="Default Parameters",
-            font=("Arial", 9),
-            bg='#95a5a6',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.load_default_parameters
-        ).pack(fill=tk.X)
-        
-        self.params_status = tk.Label(
-            params_frame,
-            text="Status: Not loaded",
-            font=("Arial", 8),
-            bg='white',
-            fg='#7f8c8d'
-        )
-        self.params_status.pack(anchor=tk.W, pady=(10, 0))
-        
-        # Quick simulations
-        sim_frame = tk.LabelFrame(
-            self.sidebar,
-            text="Quick Simulations",
-            font=("Arial", 10, "bold"),
-            bg='white',
-            fg='#2c3e50',
-            padx=10,
-            pady=10
-        )
-        sim_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        
-        tk.Button(
-            sim_frame,
-            text="▶ Single Run",
-            font=("Arial", 9, "bold"),
-            bg='#27ae60',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.run_single_simulation
-        ).pack(fill=tk.X, pady=5)
-        
-        tk.Button(
-            sim_frame,
-            text="▶ Time Series",
-            font=("Arial", 9, "bold"),
-            bg='#2980b9',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.run_time_series
-        ).pack(fill=tk.X, pady=5)
-        
-        tk.Button(
-            sim_frame,
-            text="▶ Sensitivity",
-            font=("Arial", 9, "bold"),
-            bg='#e67e22',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.run_sensitivity
-        ).pack(fill=tk.X)
-        
-        # USPED Workflow section
-        workflow_frame = tk.LabelFrame(
-            self.sidebar,
-            text="USPED Workflow",
-            font=("Arial", 10, "bold"),
-            bg='white',
-            fg='#2c3e50',
-            padx=10,
-            pady=10
-        )
-        workflow_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        
-        tk.Button(
-            workflow_frame,
-            text="🔄 Run Workflow",
-            font=("Arial", 9, "bold"),
-            bg='#8e44ad',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.run_usped_workflow
-        ).pack(fill=tk.X, pady=5)
-        
-        tk.Button(
-            workflow_frame,
-            text="📖 Workflow Docs",
-            font=("Arial", 9),
-            bg='#34495e',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.show_workflow_docs
-        ).pack(fill=tk.X)
-        
-        # History section
-        history_frame = tk.LabelFrame(
-            self.sidebar,
-            text="History",
-            font=("Arial", 10, "bold"),
-            bg='white',
-            fg='#2c3e50',
-            padx=10,
-            pady=10
-        )
-        history_frame.pack(fill=tk.BOTH, expand=True, padx=10)
+        for label, command in tools_list:
+            btn = tk.Button(
+                parent,
+                text=label,
+                font=("Arial", 8),
+                bg='#3d3d5c',
+                fg=self.text_color,
+                relief=tk.FLAT,
+                padx=10,
+                pady=6,
+                command=command
+            )
+            btn.pack(fill=tk.X, padx=5, pady=2)
+            
+            btn.bind('<Enter>', lambda e, b=btn: b.config(bg=self.accent_color, fg=self.primary_color))
+            btn.bind('<Leave>', lambda e, b=btn: b.config(bg='#3d3d5c', fg=self.text_color))
+    
+    def _create_history_tab(self, parent):
+        """Create history panel"""
+        tk.Label(
+            parent,
+            text="Operation History",
+            font=("Arial", 8, "bold"),
+            bg=self.secondary_color,
+            fg=self.text_color
+        ).pack(anchor=tk.W, padx=10, pady=10)
         
         self.history_listbox = tk.Listbox(
-            history_frame,
-            font=("Arial", 8),
+            parent,
             bg='white',
-            fg='#333'
-        )
-        self.history_listbox.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        self.history_listbox.bind('<<ListboxSelect>>', self._on_history_select)
-        
-        tk.Button(
-            history_frame,
-            text="Clear History",
+            fg=self.primary_color,
             font=("Arial", 8),
-            bg='#e74c3c',
-            fg='white',
-            padx=10,
-            pady=5,
-            command=self.clear_history
-        ).pack(fill=tk.X)
-        
-        # Visualization section
-        viz_frame = tk.LabelFrame(
-            self.sidebar,
-            text="3D Visualization",
-            font=("Arial", 10, "bold"),
-            bg='white',
-            fg='#2c3e50',
-            padx=10,
-            pady=10
+            relief=tk.FLAT
         )
-        viz_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+        self.history_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    
+    def _create_right_panel(self, parent):
+        """Create right panel with Properties and Inspector"""
+        # Header
+        header = tk.Frame(parent, bg=self.accent_color)
+        header.pack(fill=tk.X, padx=0, pady=0)
         
-        tk.Button(
-            viz_frame,
-            text="View DEM 3D",
-            font=("Arial", 9),
-            bg='#16a085',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.visualize_dem_3d
-        ).pack(fill=tk.X, pady=5)
+        tk.Label(
+            header,
+            text="PROPERTIES & INSPECTOR",
+            font=("Arial", 9, "bold"),
+            bg=self.accent_color,
+            fg=self.primary_color
+        ).pack(fill=tk.X, padx=10, pady=8)
         
-        tk.Button(
-            viz_frame,
-            text="View Erosion 3D",
-            font=("Arial", 9),
-            bg='#d35400',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.visualize_erosion_3d
-        ).pack(fill=tk.X, pady=5)
+        # Notebook for tabs
+        notebook = ttk.Notebook(parent)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        tk.Button(
-            viz_frame,
-            text="Interactive Plot",
-            font=("Arial", 9),
-            bg='#2980b9',
-            fg='white',
-            padx=15,
-            pady=8,
-            command=self.create_interactive_3d_plot
-        ).pack(fill=tk.X)
+        # Properties tab
+        props_frame = tk.Frame(notebook, bg=self.secondary_color)
+        notebook.add(props_frame, text="⚙️  Properties")
+        self._create_properties_tab(props_frame)
+        
+        # Inspector tab
+        inspector_frame = tk.Frame(notebook, bg=self.secondary_color)
+        notebook.add(inspector_frame, text="🔍 Inspector")
+        self._create_inspector_tab(inspector_frame)
+    
+    def _create_properties_tab(self, parent):
+        """Create properties panel"""
+        # Create scrollable frame
+        canvas = tk.Canvas(parent, bg=self.secondary_color, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.secondary_color)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Sample properties
+        properties = [
+            ("DEM Status:", "No DEM loaded"),
+            ("Dimensions:", "Not available"),
+            ("Resolution:", "N/A"),
+            ("CRS:", "Unknown"),
+            ("Extent:", "Not loaded"),
+        ]
+        
+        for prop_name, prop_value in properties:
+            prop_frame = tk.Frame(scrollable_frame, bg=self.secondary_color)
+            prop_frame.pack(fill=tk.X, padx=10, pady=4)
+            
+            tk.Label(
+                prop_frame,
+                text=prop_name,
+                font=("Arial", 8, "bold"),
+                bg=self.secondary_color,
+                fg=self.accent_color
+            ).pack(anchor=tk.W)
+            
+            tk.Label(
+                prop_frame,
+                text=prop_value,
+                font=("Arial", 8),
+                bg=self.secondary_color,
+                fg=self.text_color
+            ).pack(anchor=tk.W, padx=(10, 0))
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    def _create_inspector_tab(self, parent):
+        """Create inspector panel"""
+        tk.Label(
+            parent,
+            text="Layer Inspector",
+            font=("Arial", 8, "bold"),
+            bg=self.secondary_color,
+            fg=self.text_color
+        ).pack(anchor=tk.W, padx=10, pady=10)
+        
+        inspector_text = tk.Text(
+            parent,
+            bg='white',
+            fg=self.primary_color,
+            font=("Courier", 8),
+            height=20,
+            width=30,
+            relief=tk.FLAT
+        )
+        inspector_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        inspector_text.insert(1.0, "Select a layer to inspect")
+        inspector_text.config(state=tk.DISABLED)
+    
+    def _create_status_bar(self):
+        """Create status bar at the bottom"""
+        status_frame = tk.Frame(self, bg=self.secondary_color, height=25)
+        status_frame.pack(fill=tk.X, padx=0, pady=0, side=tk.BOTTOM)
+        status_frame.pack_propagate(False)
+        
+        self.status_label = tk.Label(
+            status_frame,
+            text="Ready | Zoom: 100% | Coordinates: (0.0, 0.0)",
+            font=("Arial", 8),
+            bg=self.secondary_color,
+            fg=self.text_color,
+            anchor=tk.W
+        )
+        self.status_label.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Initialize status labels for data loading
+        self.dem_status = tk.Label(status_frame, text="DEM: Not loaded", font=("Arial", 8), bg=self.secondary_color, fg='#e74c3c')
+        self.map_status = tk.Label(status_frame, text="Map: Not loaded", font=("Arial", 8), bg=self.secondary_color, fg='#e74c3c')
+        self.params_status = tk.Label(status_frame, text="Parameters: Not loaded", font=("Arial", 8), bg=self.secondary_color, fg='#e74c3c')
+    
+    # Tool stubs
+    def select_tool(self):
+        """Selection tool"""
+        self.status_label.config(text="Selection tool active")
+    
+    def edit_tool(self):
+        """Edit tool"""
+        self.status_label.config(text="Edit tool active")
+    
+    def pan_tool(self):
+        """Pan tool"""
+        self.status_label.config(text="Pan tool active")
+    
+    def zoom_in(self):
+        """Zoom in"""
+        self.status_label.config(text="Zoom in | Use mouse wheel or drag to zoom")
+    
+    def zoom_out(self):
+        """Zoom out"""
+        self.status_label.config(text="Zoom out | Use mouse wheel or drag to zoom")
+    
+    def fit_to_view(self):
+        """Fit to view"""
+        self.status_label.config(text="Fitted view to current layers")
+    
+    def show_reproject_dialog(self):
+        """Show reproject dialog"""
+        messagebox.showinfo("Reproject", "Reproject dialog would open here")
+    
+    def show_clip_dialog(self):
+        """Show clip dialog"""
+        messagebox.showinfo("Clip", "Clip dialog would open here")
+    
+    def load_shapefile(self):
+        """Load shapefile"""
+        messagebox.showinfo("Load Shapefile", "Shapefile loader would open here")
+    
+    def slope_analysis(self):
+        """Slope analysis"""
+        messagebox.showinfo("Slope Analysis", "Slope analysis would be performed")
+    
+    def flow_analysis(self):
+        """Flow accumulation analysis"""
+        messagebox.showinfo("Flow Analysis", "Flow accumulation would be calculated")
+    
+    def aspect_analysis(self):
+        """Aspect analysis"""
+        messagebox.showinfo("Aspect Analysis", "Aspect analysis would be performed")
+    
+    def show_statistics(self):
+        """Show statistics"""
+        messagebox.showinfo("Statistics", "Statistics viewer would open here")
+    
+    def show_styling_dialog(self):
+        """Show styling dialog"""
+        messagebox.showinfo("Styling", "Layer styling dialog would open here")
+    
+    def show_measure_tool(self):
+        """Show measure tool"""
+        messagebox.showinfo("Measure Tool", "Measure tool is active. Use mouse to measure distances.")
+    
+    def show_measure_dialog(self):
+        """Show measure dialog"""
+        self.show_measure_tool()
+    
+    def show_annotate_tool(self):
+        """Show annotation tool"""
+        messagebox.showinfo("Annotate", "Annotation tool would open here")
+    
+    def show_preferences(self):
+        """Show preferences"""
+        messagebox.showinfo("Preferences", "Preferences dialog would open here")
     
     def _show_welcome_screen(self):
         """Show welcome/home screen"""
@@ -1666,7 +1842,7 @@ class MainWindow(tk.Tk):
                 dem_data = self.current_dem
                 
                 # Create plotly 3D surface plot
-                fig = go.Figure(data=[go.Surface(z=dem_data, colorscale='Terrain')])
+                fig = go.Figure(data=[go.Surface(z=dem_data, colorscale='earth')])
                 
                 fig.update_layout(
                     title='Interactive 3D DEM Visualization (Plotly)',
