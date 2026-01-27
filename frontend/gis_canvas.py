@@ -6,13 +6,19 @@ Handles 2D map rendering, layer management, and map interactions
 import tkinter as tk
 from tkinter import messagebox
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-import matplotlib.patches as patches
-from matplotlib.colors import Normalize
-import matplotlib.cm as cm
 import logging
+
+try:
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.figure import Figure
+    import matplotlib.patches as patches
+    from matplotlib.colors import Normalize
+    import matplotlib.cm as cm
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -261,8 +267,8 @@ class GISCanvas:
         xlim = self.ax.get_xlim()
         ylim = self.ax.get_ylim()
         
-        self.ax.set_xlim([xlim[0] + dx, xlim[1] + dx])
-        self.ax.set_ylim([ylim[0] + dy, ylim[1] + dy])
+        self.ax.set_xlim(xlim[0] + dx, xlim[1] + dx)
+        self.ax.set_ylim(ylim[0] + dy, ylim[1] + dy)
         self.canvas.draw_idle()
     
     def _on_scroll(self, event):

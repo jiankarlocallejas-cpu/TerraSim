@@ -208,12 +208,14 @@ class WorldMachine3DViewer:
     
     def _get_colors(self, mode: str) -> np.ndarray:
         """Get color array based on shading mode"""
+        from matplotlib.colors import Normalize
+        import matplotlib.cm as cm
         h, w = self.current_dem.shape
         
         if mode == "elevation":
             # Color by elevation
-            norm = plt.Normalize(vmin=np.min(self.current_dem), vmax=np.max(self.current_dem))
-            colors = plt.cm.terrain(norm(self.current_dem))
+            norm = Normalize(vmin=np.min(self.current_dem), vmax=np.max(self.current_dem))
+            colors = cm.terrain(norm(self.current_dem))  # type: ignore
         
         elif mode == "hillshade":
             # Hillshade coloring
@@ -237,9 +239,9 @@ class WorldMachine3DViewer:
             shading = (shading + 1) / 2
             
             # Apply terrain colors with shading
-            norm = plt.Normalize(vmin=0, vmax=1)
-            shading_colors = plt.cm.gray(norm(shading))
-            elevation_colors = plt.cm.terrain(norm(self.current_dem/np.max(self.current_dem)))
+            norm = Normalize(vmin=0, vmax=1)
+            shading_colors = cm.Greys(norm(shading))  # type: ignore
+            elevation_colors = cm.terrain(norm(self.current_dem/np.max(self.current_dem)))  # type: ignore
             
             # Blend
             colors = 0.5 * elevation_colors + 0.5 * shading_colors
@@ -248,16 +250,16 @@ class WorldMachine3DViewer:
             # Color by slope
             gy, gx = np.gradient(self.current_dem)
             slope = np.arctan(np.sqrt(gx**2 + gy**2))
-            norm = plt.Normalize(vmin=0, vmax=np.pi/4)
-            colors = plt.cm.hot(norm(slope))
+            norm = Normalize(vmin=0, vmax=np.pi/4)
+            colors = cm.hot(norm(slope))  # type: ignore
         
         else:  # aspect
             # Color by aspect
             gy, gx = np.gradient(self.current_dem)
             aspect = np.arctan2(gy, -gx)
             aspect = (aspect + np.pi) / (2 * np.pi)
-            norm = plt.Normalize(vmin=0, vmax=1)
-            colors = plt.cm.hsv(norm(aspect))
+            norm = Normalize(vmin=0, vmax=1)
+            colors = cm.hsv(norm(aspect))  # type: ignore
         
         return colors
     

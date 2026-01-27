@@ -365,7 +365,8 @@ class TerraSim_GIS(tk.Tk):
         try:
             import geopandas as gpd
             gdf = gpd.read_file(filepath)
-            self.gis_canvas.add_vector_layer(gdf.geometry, name=gdf.name or 'Vector')
+            layer_name = str(gdf.name) if gdf.name is not None else 'Vector'
+            self.gis_canvas.add_vector_layer(gdf.geometry, name=layer_name)
             self._set_status(f"Loaded Shapefile: {filepath}")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load shapefile: {e}")
@@ -469,18 +470,14 @@ class TerraSim_GIS(tk.Tk):
             self.update()
             
             # Simple simulation
-            params = SimulationParameters(
-                dem=self.current_dem,
-                precipitation=100,
-                timesteps=10,
-                cell_size=1.0
-            )
+            from backend.services.terrain_simulator import TerrainSimulator
+            simulator = TerrainSimulator(self.current_dem, cell_size=1.0)
+            results = simulator.run_simulation()
             
-            result = self.sim_engine.run_simulation(params)
-            
-            if result:
-                # Add erosion result to 3D viewer
-                self.world_machine_viewer.add_erosion_layer(result.dem)
+            if results and len(results) > 0:
+                # Add final erosion result to 3D viewer
+                final_snapshot = results[-1]
+                self.world_machine_viewer.add_erosion_layer(final_snapshot.elevation)
                 
                 self._set_status("Simulation complete")
                 messagebox.showinfo("Success", "Simulation completed!")
