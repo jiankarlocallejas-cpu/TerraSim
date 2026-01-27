@@ -7,7 +7,7 @@ from tkinter import ttk, messagebox
 import numpy as np
 import threading
 import time
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict, Any, Union
 from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -397,19 +397,23 @@ class SimulationScreen(tk.Frame):
                 
                 # Run single step erosion calculation
                 try:
-                    # Create simulation parameters as dict
-                    params_dict = {
-                        'rainfall_erosivity': self.parameters.get('rainfall_erosivity', 300.0),
-                        'soil_erodibility': self.parameters.get('soil_erodibility', 0.35),
-                        'cover_factor': self.parameters.get('cover_factor', 0.3),
-                        'practice_factor': self.parameters.get('practice_factor', 0.5),
-                        'time_step_days': self.time_step_days,
-                        'num_timesteps': 1,
-                        'bulk_density': self.parameters.get('bulk_density', 1300.0),
-                        'area_exponent': self.parameters.get('area_exponent', 0.6),
-                        'slope_exponent': self.parameters.get('slope_exponent', 1.3),
-                        'runoff_coefficient': self.parameters.get('runoff_coefficient', 0.5),
-                    }
+                    # Convert parameters to SimulationParameters object if needed
+                    from backend.services.simulation_engine import SimulationParameters
+                    if isinstance(self.parameters, dict):
+                        params_obj = SimulationParameters(
+                            rainfall_erosivity=self.parameters.get('rainfall_erosivity', 300.0),
+                            soil_erodibility=self.parameters.get('soil_erodibility', 0.35),
+                            cover_factor=self.parameters.get('cover_factor', 0.3),
+                            practice_factor=self.parameters.get('practice_factor', 0.5),
+                            time_step_days=self.time_step_days,
+                            num_timesteps=1,
+                            bulk_density=self.parameters.get('bulk_density', 1300.0),
+                            area_exponent=self.parameters.get('area_exponent', 0.6),
+                            slope_exponent=self.parameters.get('slope_exponent', 1.3),
+                            runoff_coefficient=self.parameters.get('runoff_coefficient', 0.5),
+                        )
+                    else:
+                        params_obj = self.parameters
                     
                     # Calculate erosion for this timestep
                     slopes = self._calculate_slopes(current_dem)
@@ -417,11 +421,11 @@ class SimulationScreen(tk.Frame):
                     flow_accumulation = self._calculate_flow_accumulation(current_dem)
                     
                     transport_capacity = self._calculate_transport_capacity(
-                        flow_accumulation, slopes, params_dict
+                        flow_accumulation, slopes, params_obj
                     )
                     
                     erosion_rate = self._calculate_erosion(
-                        transport_capacity, aspects, params_dict
+                        transport_capacity, aspects, params_obj
                     )
                     
                     # Update DEM
@@ -690,9 +694,15 @@ Max Peak:        {np.max(self.stats_history['peak_erosion']):.6f} m/yr
     def _calculate_transport_capacity(
         flow: np.ndarray,
         slopes: np.ndarray,
-        params: Dict[str, Any]
+        params: Any
     ) -> np.ndarray:
         """Calculate sediment transport capacity"""
+        from backend.services.simulation_engine import SimulationParameters
+        
+        # Convert to dict if SimulationParameters
+        if isinstance(params, SimulationParameters):
+            params = params.__dict__
+        
         flow_safe = np.maximum(flow, 1.0)
         slope_safe = np.maximum(slopes, 0.001)
         
@@ -711,9 +721,15 @@ Max Peak:        {np.max(self.stats_history['peak_erosion']):.6f} m/yr
     def _calculate_erosion(
         transport_capacity: np.ndarray,
         aspects: np.ndarray,
-        params: Dict[str, Any]
+        params: Any
     ) -> np.ndarray:
         """Calculate erosion rate"""
+        from backend.services.simulation_engine import SimulationParameters
+        
+        # Convert to dict if SimulationParameters
+        if isinstance(params, SimulationParameters):
+            params = params.__dict__
+        
         erosion = transport_capacity * params['runoff_coefficient']
         solar_factor = 0.5 + 0.5 * np.sin(np.radians(aspects))
         erosion *= solar_factor

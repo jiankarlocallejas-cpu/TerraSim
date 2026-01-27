@@ -2,7 +2,7 @@
 Configuration settings for the TerraSim application.
 """
 
-from pydantic import AnyHttpUrl, PostgresDsn, validator
+from pydantic import AnyHttpUrl, validator, root_validator
 from pydantic_settings import BaseSettings
 from typing import List, Optional, Dict, Any, Union
 import secrets
@@ -41,13 +41,21 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "")
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "terrasim")
-    DATABASE_URI: Optional[PostgresDsn] = None
+    USE_SQLITE: bool = os.getenv("USE_SQLITE", "true").lower() == "true"
+    DATABASE_URI: Optional[str] = None
 
-    @validator("DATABASE_URI", pre=True)
-    def assemble_db_connection(cls, v: Optional[str], values: Dict[str, Any]) -> Any:
-        if isinstance(v, str):
-            return v
-        return f"postgresql://{values.get('POSTGRES_USER')}:{values.get('POSTGRES_PASSWORD')}@{values.get('POSTGRES_SERVER')}/{values.get('POSTGRES_DB')}"
+    @root_validator(pre=False, skip_on_failure=True)
+    def assemble_db_connection(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        # Set DATABASE_URI based on USE_SQLITE setting
+        if values.get('USE_SQLITE'):
+            values['DATABASE_URI'] = "sqlite:///./terrasim.db"
+        else:
+            pg_user = values.get('POSTGRES_USER', 'postgres')
+            pg_pass = values.get('POSTGRES_PASSWORD', '')
+            pg_server = values.get('POSTGRES_SERVER', 'localhost')
+            pg_db = values.get('POSTGRES_DB', 'terrasim')
+            values['DATABASE_URI'] = f"postgresql://{pg_user}:{pg_pass}@{pg_server}/{pg_db}"
+        return values
 
     # Storage settings
     STORAGE_TYPE: str = os.getenv("STORAGE_TYPE", "local")  # 'local' or 's3'

@@ -15,7 +15,7 @@ from datetime import datetime
 class ResultScreen(tk.Frame):
     """Screen displaying simulation results"""
     
-    def __init__(self, parent, result_data: Dict[str, Any] = None):
+    def __init__(self, parent, result_data: Optional[Dict[str, Any]] = None):
         super().__init__(parent, bg='#f0f0f0')
         self.result_data = result_data or {}
         self.current_view = "summary"
@@ -238,6 +238,15 @@ Uncertainty Range:       {self.result_data.get('uncertainty_range', ('N/A', 'N/A
         tree.heading('Value', text='Value')
         
         params = self.result_data.get('parameters', {})
+        
+        # Convert params to dict if it's an object with to_dict method
+        if hasattr(params, 'to_dict'):
+            params = params.to_dict()
+        elif hasattr(params, '__dict__'):
+            params = params.__dict__
+        elif not isinstance(params, dict):
+            params = {}
+        
         for key, value in params.items():
             tree.insert('', tk.END, text=key, values=(f"{value}",))
         

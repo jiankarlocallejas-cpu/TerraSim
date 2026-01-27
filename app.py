@@ -80,7 +80,8 @@ def start_calculation_engine():
     """Initialize the USPED erosion calculation engine"""
     logger.info("Initializing USPED erosion model...")
     try:
-        from backend.services.erosion_model import USPEDErosionModel
+        from backend.services.erosion_model import TerraSIMErosionModel, SoilModelParameters
+        model = TerraSIMErosionModel(SoilModelParameters())
         logger.info("USPED model loaded and ready for calculations")
         return True
     except Exception as e:

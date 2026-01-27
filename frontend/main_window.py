@@ -1382,18 +1382,35 @@ class MainWindow(tk.Tk):
             widget.destroy()
         
         if self.current_result:
-            # Convert result to dict if needed
+            # Convert result to dict and serialize properly
             result_dict = (
                 self.current_result.__dict__
                 if hasattr(self.current_result, '__dict__')
                 else self.current_result
             )
             
+            # Serialize numpy arrays and enums
+            serialized_result = self._serialize_result(result_dict)
+            
             result_screen = ResultScreen(
                 self.content_frame,
-                result_dict
+                serialized_result
             )
             result_screen.pack(fill=tk.BOTH, expand=True)
+    
+    def _serialize_result(self, result_dict):
+        """Serialize result dict to JSON-compatible format"""
+        serialized = {}
+        for key, value in result_dict.items():
+            if hasattr(value, 'value'):  # Enum
+                serialized[key] = value.value
+            elif isinstance(value, np.ndarray):  # NumPy array
+                serialized[key] = f"<numpy array shape={value.shape}>"
+            elif hasattr(value, '__dict__'):  # Dataclass/object
+                serialized[key] = self._serialize_result(value.__dict__)
+            else:
+                serialized[key] = value
+        return serialized
     
     def _update_history(self):
         """Update history listbox"""
