@@ -283,7 +283,8 @@ class RasterProcessor:
             int(raster.shape[0] * scale_factor),
             int(raster.shape[1] * scale_factor)
         )
-        return ndimage.zoom(raster, scale_factor, order=order)
+        result = ndimage.zoom(raster, scale_factor, order=order)
+        return result  # type: ignore
     
     @staticmethod
     def extract_by_mask(
@@ -645,7 +646,7 @@ class ModernGLTerrainRenderer:
         """Apply categorized symbology (QGIS)"""
         result = np.zeros_like(dem)
         for cat_id, (min_val, max_val) in enumerate(categories.values()):
-            mask = (dem >= min_val) & (dem <= max_val)
+            mask = (dem >= min_val) & (dem <= max_val)  # type: ignore
             result[mask] = cat_id
         return result
     

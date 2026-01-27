@@ -192,7 +192,7 @@ class GISCanvas:
             cmap=colormap,
             origin='lower',
             alpha=alpha,
-            extent=[self.extent[0], self.extent[1], self.extent[2], self.extent[3]]
+            extent=(float(self.extent[0]), float(self.extent[1]), float(self.extent[2]), float(self.extent[3]))
         )
         plt.colorbar(im, ax=self.ax, label='Elevation (m)')
     

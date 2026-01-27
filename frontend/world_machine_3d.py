@@ -210,11 +210,15 @@ class WorldMachine3DViewer:
         """Get color array based on shading mode"""
         from matplotlib.colors import Normalize
         import matplotlib.cm as cm
+        
+        if self.current_dem is None:
+            return np.zeros((10, 10, 4), dtype=np.float32)
+        
         h, w = self.current_dem.shape
         
         if mode == "elevation":
             # Color by elevation
-            norm = Normalize(vmin=np.min(self.current_dem), vmax=np.max(self.current_dem))
+            norm = Normalize(vmin=float(np.min(self.current_dem)), vmax=float(np.max(self.current_dem)))
             colors = cm.terrain(norm(self.current_dem))  # type: ignore
         
         elif mode == "hillshade":
@@ -248,14 +252,14 @@ class WorldMachine3DViewer:
         
         elif mode == "slope":
             # Color by slope
-            gy, gx = np.gradient(self.current_dem)
+            gy, gx = np.gradient(self.current_dem)  # type: ignore
             slope = np.arctan(np.sqrt(gx**2 + gy**2))
             norm = Normalize(vmin=0, vmax=np.pi/4)
             colors = cm.hot(norm(slope))  # type: ignore
         
         else:  # aspect
             # Color by aspect
-            gy, gx = np.gradient(self.current_dem)
+            gy, gx = np.gradient(self.current_dem)  # type: ignore
             aspect = np.arctan2(gy, -gx)
             aspect = (aspect + np.pi) / (2 * np.pi)
             norm = Normalize(vmin=0, vmax=1)

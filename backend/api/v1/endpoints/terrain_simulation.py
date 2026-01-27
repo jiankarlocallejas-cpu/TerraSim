@@ -109,7 +109,7 @@ class SimulationResultResponse(BaseModel):
 async def run_terrain_simulation(
     request: SimulationRequest,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = None
+    background_tasks: Optional[BackgroundTasks] = None
 ):
     """
     Run a time-stepped terrain simulation.
@@ -132,10 +132,16 @@ async def run_terrain_simulation(
         if request.dem_id:
             # Load from database
             from backend.models.raster import Raster
-            raster = db.query(Raster).filter(Raster.id == request.dem_id).first()
+            raster = db.query(Raster).filter(Raster.id == request.dem_id).first()  # type: ignore
             if not raster:
                 raise ValidationError("DEM not found", field="dem_id")
-            dem_data = raster.get_data()  # Assuming get_data() method exists
+            try:
+                import rasterio
+                import numpy as np
+                with rasterio.open(raster.file_path) as src:
+                    dem_data = src.read(1).astype(np.float64)
+            except Exception as e:
+                raise ValidationError(f"Failed to load DEM: {str(e)}", field="dem_id")
         elif request.dem_data:
             import numpy as np
             dem_data = np.array(request.dem_data, dtype=np.float64)
