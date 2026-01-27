@@ -282,10 +282,19 @@ class HeatmapSimulationScreen(tk.Frame):
         self.simulation_thread.start()
     
     def _run_simulation_loop(self):
-        """Main simulation loop"""
+        """Main simulation loop with timeout protection"""
+        import signal
+        
+        # Set timeout for the entire simulation (prevent infinite loops)
+        MAX_STEP_TIME = 30  # Max 30 seconds per step
+        
         try:
             current_dem = self.dem.copy()
             cumulative_erosion = np.zeros_like(current_dem)
+            
+            # Track UI update timing to avoid excessive redraws
+            last_ui_update = time.time()
+            ui_update_interval = 0.2  # Update UI max every 200ms
             
             for step in range(self.current_step, self.total_steps):
                 # Check pause/cancel
@@ -295,10 +304,22 @@ class HeatmapSimulationScreen(tk.Frame):
                 if not self.is_running:
                     break
                 
+                step_start = time.time()
+                
                 try:
-                    # Calculate terrain parameters
+                    # Calculate terrain parameters with timeout check
                     slopes = self._calculate_slopes(current_dem)
+                    
+                    # Monitor for long operations
+                    if time.time() - step_start > MAX_STEP_TIME / 2:
+                        logger.warning(f"Slope calculation taking too long ({time.time() - step_start:.1f}s)")
+
                     flow_acc = self._calculate_flow_accumulation(current_dem)
+                    
+                    # Check timeout mid-calculation
+                    if time.time() - step_start > MAX_STEP_TIME:
+                        logger.error(f"Step {step} timeout after flow calculation")
+                        raise TimeoutError(f"Step {step} exceeded {MAX_STEP_TIME}s limit")
                     
                     # Calculate erosion
                     rainfall = self.parameters.get('rainfall_erosivity', 300.0)
@@ -306,38 +327,56 @@ class HeatmapSimulationScreen(tk.Frame):
                     c_factor = self.parameters.get('cover_factor', 0.3)
                     p_factor = self.parameters.get('practice_factor', 0.5)
                     
-                    erosion_rate = (
-                        rainfall * soil_k * c_factor * p_factor *
-                        (flow_acc ** 0.6) * (np.sin(slopes) ** 1.3)
-                    )
-                    erosion_rate = np.maximum(erosion_rate, 0)
+                    # Validate parameters
+                    if rainfall <= 0 or soil_k <= 0 or c_factor <= 0:
+                        logger.warning(f"Invalid parameters: R={rainfall}, K={soil_k}, C={c_factor}")
+                        erosion_rate = np.zeros_like(current_dem)
+                    else:
+                        erosion_rate = (
+                            rainfall * soil_k * c_factor * p_factor *
+                            (np.clip(flow_acc, 1, None) ** 0.6) * (np.sin(np.clip(slopes, 0, np.pi/2)) ** 1.3)
+                        )
+                        erosion_rate = np.maximum(erosion_rate, 0)
+                        # Cap extreme values
+                        erosion_rate = np.clip(erosion_rate, 0, np.percentile(erosion_rate, 99.9) if np.any(erosion_rate) else 1.0)
                     
-                    # Update DEM
+                    # Update DEM with validation
                     elevation_change = -erosion_rate * self.time_step_days
-                    current_dem += elevation_change
-                    cumulative_erosion += erosion_rate * self.time_step_days
+                    current_dem = np.nan_to_num(current_dem + elevation_change, nan=0.0, posinf=1e10, neginf=-1e10)
+                    cumulative_erosion = np.nan_to_num(cumulative_erosion + erosion_rate * self.time_step_days, nan=0.0)
                     
-                    # Store history
-                    self.current_dem = current_dem.copy()
-                    self.elevation_history.append(current_dem.copy())
+                    # Store history with validation
+                    self.current_dem = np.clip(current_dem.copy(), -1e10, 1e10)
+                    self.elevation_history.append(self.current_dem.copy())
                     self.erosion_history.append(erosion_rate.copy())
                     
-                    # Calculate statistics
-                    mean_erosion = np.mean(erosion_rate[erosion_rate > 0]) if np.any(erosion_rate > 0) else 0
-                    peak_erosion = np.max(erosion_rate)
-                    total_loss = np.sum(cumulative_erosion)
+                    # Calculate statistics with safe operations
+                    valid_erosion = erosion_rate[erosion_rate > 1e-10]
+                    mean_erosion = np.mean(valid_erosion) if len(valid_erosion) > 0 else 0.0
+                    peak_erosion = float(np.max(erosion_rate))
+                    total_loss = float(np.sum(cumulative_erosion))
+                    
+                    # Validate statistics
+                    for stat in [mean_erosion, peak_erosion, total_loss]:
+                        if np.isnan(stat) or np.isinf(stat):
+                            logger.warning(f"Invalid statistic detected: {stat}")
+                            stat = 0.0
                     
                     self.stats_history['mean_erosion'].append(mean_erosion)
                     self.stats_history['peak_erosion'].append(peak_erosion)
                     self.stats_history['cumulative_loss'].append(total_loss)
                     self.stats_history['timestamp'].append(step * self.time_step_days)
                     
-                    # Update UI
+                    # Update UI with throttling to prevent excessive redraws
                     self.current_step = step + 1
-                    self.after(0, self._update_ui, erosion_rate, cumulative_erosion)
+                    current_time = time.time()
+                    if current_time - last_ui_update >= ui_update_interval:
+                        self.after(0, self._update_ui, erosion_rate, cumulative_erosion)
+                        last_ui_update = current_time
                     
-                    # Speed control
-                    time.sleep(self.speed_var.get() / 1000.0)
+                    # Speed control - non-blocking
+                    speed_delay = max(0, min(1.0, self.speed_var.get() / 1000.0))  # Clamp 0-1s
+                    time.sleep(speed_delay)
                     
                 except Exception as e:
                     logger.error(f"Step error: {e}")
@@ -355,21 +394,33 @@ class HeatmapSimulationScreen(tk.Frame):
             self.is_running = False
     
     def _update_ui(self, erosion_rate: np.ndarray, cumulative_erosion: np.ndarray):
-        """Update visualization"""
-        progress_percent = (self.current_step / self.total_steps) * 100
-        self.progress_var.set(self.current_step)
-        self.progress_label.config(
-            text=f"Step: {self.current_step}/{self.total_steps} ({progress_percent:.1f}%)"
-        )
-        
-        simulated_time = self.current_step * self.time_step_days
-        self.time_label.config(text=f"Time: {simulated_time:.1f} days")
-        
-        # Update OpenGL visualization
-        if hasattr(self, 'visualization_widget'):
-            self.visualization_widget.add_frame(self.current_dem)
-        
-        self._update_stats_display()
+        """Update visualization - called from main thread via after()"""
+        try:
+            progress_percent = (self.current_step / self.total_steps) * 100
+            self.progress_var.set(self.current_step)
+            self.progress_label.config(
+                text=f"Step: {self.current_step}/{self.total_steps} ({progress_percent:.1f}%)"
+            )
+            
+            simulated_time = self.current_step * self.time_step_days
+            self.time_label.config(text=f"Time: {simulated_time:.1f} days")
+            
+            # Update OpenGL visualization with timeout protection
+            if hasattr(self, 'visualization_widget'):
+                try:
+                    # AnimatedOpenGLCanvas has a canvas attribute
+                    if hasattr(self.visualization_widget, 'canvas'):
+                        self.visualization_widget.canvas.update_erosion(self.current_dem)
+                    # Fallback for other widget types  
+                    elif callable(getattr(self.visualization_widget, 'add_frame', None)):
+                        self.visualization_widget.add_frame(self.current_dem)
+                except Exception as render_error:
+                    logger.warning(f"Rendering error (non-fatal): {render_error}")
+                    # Continue with simulation even if rendering fails
+            
+            self._update_stats_display()
+        except Exception as e:
+            logger.error(f"UI update error: {e}", exc_info=True)
     
     def _update_stats_display(self):
         """Update statistics panel"""

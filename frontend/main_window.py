@@ -7,8 +7,14 @@ from tkinter import ttk, messagebox, filedialog
 import numpy as np
 import logging
 import os
+import threading
+import json
+import csv
 from typing import Optional, cast, Dict, Any
 from datetime import datetime
+
+# GIS and data handling
+import geopandas as gpd
 
 # Visualization imports for 2D and 3D
 import matplotlib.pyplot as plt
@@ -19,7 +25,11 @@ import matplotlib.cm as cm
 from matplotlib.colors import Normalize
 
 # Additional visualization
-import plotly.graph_objects as go
+try:
+    import plotly.graph_objects as go
+except ImportError:
+    go = None  # Plotly is optional
+
 from PIL import Image, ImageDraw, ImageTk
 
 from .screens import CalculationScreen, ResultScreen, SimulationScreen, WorkflowScreen
@@ -762,7 +772,6 @@ class MainWindow(tk.Tk):
             try:
                 if file_path.endswith(('.shp')):
                     # Shapefile - vector format
-                    import geopandas as gpd
                     gdf = gpd.read_file(file_path)
                     
                     # Convert vector to raster for visualization
@@ -789,7 +798,6 @@ class MainWindow(tk.Tk):
                 
                 elif file_path.endswith(('.geojson', '.json')):
                     # GeoJSON - vector format
-                    import geopandas as gpd
                     gdf = gpd.read_file(file_path)
                     
                     try:
@@ -926,9 +934,6 @@ class MainWindow(tk.Tk):
         
         if file_paths:
             try:
-                import json
-                import csv
-                
                 # Start with defaults
                 merged_params = self._get_default_parameters()
                 
@@ -1466,88 +1471,101 @@ class MainWindow(tk.Tk):
     # ============= 3D VISUALIZATION METHODS =============
     
     def visualize_dem_3d(self):
-        """Display DEM in 3D surface plot"""
+        """Display DEM in 3D surface plot (non-blocking)"""
         if self.current_dem is None:
             messagebox.showwarning("Warning", "Please load or generate a DEM first")
             return
         
-        try:
-            # Create 3D plot window
-            fig = Figure(figsize=(10, 8), dpi=100)
-            ax = fig.add_subplot(111, projection='3d')
-            
-            # Create mesh grid
-            dem_data = self.current_dem
-            x = np.arange(dem_data.shape[1])
-            y = np.arange(dem_data.shape[0])
-            X, Y = np.meshgrid(x, y)
-            
-            # Plot surface
-            surf = ax.plot_surface(X, Y, dem_data, cmap='terrain', alpha=0.8, edgecolor='none')
-            
-            # Customize plot
-            ax.set_xlabel('X (pixels)', fontweight='bold')
-            ax.set_ylabel('Y (pixels)', fontweight='bold')
-            ax.set_zlabel('Elevation (m)', fontweight='bold')
-            ax.set_title('Digital Elevation Model - 3D View', fontsize=14, fontweight='bold')
-            
-            # Add colorbar
-            fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='Elevation (m)')
-            
-            # Set viewing angle
-            ax.view_init(elev=25, azim=45)
-            
-            # Create tkinter window for plot
-            plot_window = tk.Toplevel(self)
-            plot_window.title("3D DEM Visualization")
-            plot_window.geometry("900x700")
-            
-            canvas = FigureCanvasTkAgg(fig, master=plot_window)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-            
-            # Add rotation controls
-            control_frame = tk.Frame(plot_window)
-            control_frame.pack(fill=tk.X, padx=10, pady=10)
-            
-            tk.Label(control_frame, text="View Angle:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
-            
-            def update_view(elev, azim):
-                ax.view_init(elev=elev, azim=azim)
-                canvas.draw()
-            
-            tk.Button(
-                control_frame,
-                text="Top View",
-                command=lambda: update_view(90, 0)
-            ).pack(side=tk.LEFT, padx=2)
-            
-            tk.Button(
-                control_frame,
-                text="Side View",
-                command=lambda: update_view(0, 0)
-            ).pack(side=tk.LEFT, padx=2)
-            
-            tk.Button(
-                control_frame,
-                text="Isometric",
-                command=lambda: update_view(25, 45)
-            ).pack(side=tk.LEFT, padx=2)
-            
-            tk.Button(
-                control_frame,
-                text="3D View",
-                command=lambda: update_view(35, 120)
-            ).pack(side=tk.LEFT, padx=2)
-            
-            logger.info("Opened 3D DEM visualization")
-            
-        except Exception as e:
-            logger.error(f"Error creating 3D visualization: {e}")
-            messagebox.showerror("Error", f"Failed to create 3D visualization: {str(e)}")
+        def create_plot_async():
+            """Create 3D plot in background to prevent UI blocking"""
+            try:
+                # Create 3D plot window
+                fig = Figure(figsize=(10, 8), dpi=100)
+                ax = fig.add_subplot(111, projection='3d')
+                
+                # Create mesh grid
+                dem_data = self.current_dem
+                x = np.arange(dem_data.shape[1])
+                y = np.arange(dem_data.shape[0])
+                X, Y = np.meshgrid(x, y)
+                
+                # Plot surface
+                surf = ax.plot_surface(X, Y, dem_data, cmap='terrain', alpha=0.8, edgecolor='none')
+                
+                # Customize plot
+                ax.set_xlabel('X (pixels)', fontweight='bold')
+                ax.set_ylabel('Y (pixels)', fontweight='bold')
+                ax.set_zlabel('Elevation (m)', fontweight='bold')
+                ax.set_title('Digital Elevation Model - 3D View', fontsize=14, fontweight='bold')
+                
+                # Add colorbar
+                fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='Elevation (m)')
+                
+                # Set viewing angle
+                ax.view_init(elev=25, azim=45)
+                
+                # Schedule UI creation on main thread
+                self.after(0, lambda: self._show_dem_3d_plot(fig, ax))
+                logger.info("3D DEM visualization created")
+                
+            except Exception as e:
+                logger.error(f"Error creating 3D visualization: {e}")
+                self.after(0, lambda: messagebox.showerror("Error", f"Failed to create 3D visualization: {str(e)}"))
+        
+        # Run plot creation in background thread
+        thread = threading.Thread(target=create_plot_async, daemon=True)
+        thread.start()
+    
+    def _show_dem_3d_plot(self, fig, ax):
+        """Display DEM 3D plot window (called on main thread)"""
+        # Create tkinter window for plot
+        plot_window = tk.Toplevel(self)
+        plot_window.title("3D DEM Visualization")
+        plot_window.geometry("900x700")
+        
+        # Use non-blocking draw
+        canvas = FigureCanvasTkAgg(fig, master=plot_window)
+        canvas.draw_idle()  # Non-blocking draw
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # Add rotation controls
+        control_frame = tk.Frame(plot_window)
+        control_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(control_frame, text="View Angle:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        
+        def update_view(elev, azim):
+            ax.view_init(elev=elev, azim=azim)
+            canvas.draw_idle()  # Non-blocking draw
+        
+        tk.Button(
+            control_frame,
+            text="Top View",
+            command=lambda: update_view(90, 0)
+        ).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(
+            control_frame,
+            text="Side View",
+            command=lambda: update_view(0, 0)
+        ).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(
+            control_frame,
+            text="Isometric",
+            command=lambda: update_view(25, 45)
+        ).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(
+            control_frame,
+            text="3D View",
+            command=lambda: update_view(35, 120)
+        ).pack(side=tk.LEFT, padx=2)
+        
+        logger.info("Opened 3D DEM visualization")
     
     def visualize_erosion_3d(self):
-        """Display erosion results in 3D"""
+        """Display erosion results in 3D (non-blocking)"""
         if self.current_result is None:
             messagebox.showwarning("Warning", "Please run a simulation first")
             return
@@ -1556,97 +1574,123 @@ class MainWindow(tk.Tk):
             messagebox.showwarning("Warning", "No erosion data available")
             return
         
-        try:
-            # Create 3D plot window
-            fig = Figure(figsize=(10, 8), dpi=100)
-            ax = fig.add_subplot(111, projection='3d')
-            
-            # Get erosion data
-            erosion_data = self.current_result.erosion_rate
-            dem_data = self.current_dem if self.current_dem is not None else np.zeros_like(erosion_data)
-            
-            # Create mesh grid
-            x = np.arange(erosion_data.shape[1])
-            y = np.arange(erosion_data.shape[0])
-            X, Y = np.meshgrid(x, y)
-            
-            # Plot erosion as 3D surface using dem + erosion
-            combined = dem_data + erosion_data * 10  # Scale erosion for visibility
-            surf = ax.plot_surface(X, Y, combined, cmap='RdYlGn_r', alpha=0.8, edgecolor='none')
-            
-            # Customize plot
-            ax.set_xlabel('X (pixels)', fontweight='bold')
-            ax.set_ylabel('Y (pixels)', fontweight='bold')
-            ax.set_zlabel('Elevation + Erosion (m)', fontweight='bold')
-            ax.set_title('Erosion Analysis - 3D View', fontsize=14, fontweight='bold')
-            
-            # Add colorbar
-            fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='Elevation + Erosion (m)')
-            
-            # Set viewing angle
-            ax.view_init(elev=25, azim=45)
-            
-            # Create tkinter window for plot
-            plot_window = tk.Toplevel(self)
-            plot_window.title("3D Erosion Visualization")
-            plot_window.geometry("900x700")
-            
-            canvas = FigureCanvasTkAgg(fig, master=plot_window)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-            
-            # Add rotation controls
-            control_frame = tk.Frame(plot_window)
-            control_frame.pack(fill=tk.X, padx=10, pady=10)
-            
-            tk.Label(control_frame, text="View Angle:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
-            
-            def update_view(elev, azim):
-                ax.view_init(elev=elev, azim=azim)
-                canvas.draw()
-            
-            tk.Button(control_frame, text="Top View", command=lambda: update_view(90, 0)).pack(side=tk.LEFT, padx=2)
-            tk.Button(control_frame, text="Side View", command=lambda: update_view(0, 0)).pack(side=tk.LEFT, padx=2)
-            tk.Button(control_frame, text="Isometric", command=lambda: update_view(25, 45)).pack(side=tk.LEFT, padx=2)
-            tk.Button(control_frame, text="3D View", command=lambda: update_view(35, 120)).pack(side=tk.LEFT, padx=2)
-            
-            logger.info("Opened 3D erosion visualization")
-            
-        except Exception as e:
-            logger.error(f"Error creating 3D erosion visualization: {e}")
-            messagebox.showerror("Error", f"Failed to create 3D visualization: {str(e)}")
+        def create_erosion_plot_async():
+            """Create erosion 3D plot in background to prevent UI blocking"""
+            try:
+                # Create 3D plot window
+                fig = Figure(figsize=(10, 8), dpi=100)
+                ax = fig.add_subplot(111, projection='3d')
+                
+                # Get erosion data
+                erosion_data = self.current_result.erosion_rate
+                dem_data = self.current_dem if self.current_dem is not None else np.zeros_like(erosion_data)
+                
+                # Create mesh grid
+                x = np.arange(erosion_data.shape[1])
+                y = np.arange(erosion_data.shape[0])
+                X, Y = np.meshgrid(x, y)
+                
+                # Plot erosion as 3D surface using dem + erosion
+                combined = dem_data + erosion_data * 10  # Scale erosion for visibility
+                surf = ax.plot_surface(X, Y, combined, cmap='RdYlGn_r', alpha=0.8, edgecolor='none')
+                
+                # Customize plot
+                ax.set_xlabel('X (pixels)', fontweight='bold')
+                ax.set_ylabel('Y (pixels)', fontweight='bold')
+                ax.set_zlabel('Elevation + Erosion (m)', fontweight='bold')
+                ax.set_title('Erosion Analysis - 3D View', fontsize=14, fontweight='bold')
+                
+                # Add colorbar
+                fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='Elevation + Erosion (m)')
+                
+                # Set viewing angle
+                ax.view_init(elev=25, azim=45)
+                
+                # Schedule UI creation on main thread
+                self.after(0, lambda: self._show_erosion_3d_plot(fig, ax))
+                logger.info("3D erosion visualization created")
+                
+            except Exception as e:
+                logger.error(f"Error creating 3D erosion visualization: {e}")
+                self.after(0, lambda: messagebox.showerror("Error", f"Failed to create 3D visualization: {str(e)}"))
+        
+        # Run plot creation in background thread
+        thread = threading.Thread(target=create_erosion_plot_async, daemon=True)
+        thread.start()
+    
+    def _show_erosion_3d_plot(self, fig, ax):
+        """Display erosion 3D plot window (called on main thread)"""
+        # Create tkinter window for plot
+        plot_window = tk.Toplevel(self)
+        plot_window.title("3D Erosion Visualization")
+        plot_window.geometry("900x700")
+        
+        # Use non-blocking draw
+        canvas = FigureCanvasTkAgg(fig, master=plot_window)
+        canvas.draw_idle()  # Non-blocking draw
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # Add rotation controls
+        control_frame = tk.Frame(plot_window)
+        control_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(control_frame, text="View Angle:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        
+        def update_view(elev, azim):
+            ax.view_init(elev=elev, azim=azim)
+            canvas.draw_idle()  # Non-blocking draw
+        
+        tk.Button(control_frame, text="Top View", command=lambda: update_view(90, 0)).pack(side=tk.LEFT, padx=2)
+        tk.Button(control_frame, text="Side View", command=lambda: update_view(0, 0)).pack(side=tk.LEFT, padx=2)
+        tk.Button(control_frame, text="Isometric", command=lambda: update_view(25, 45)).pack(side=tk.LEFT, padx=2)
+        tk.Button(control_frame, text="3D View", command=lambda: update_view(35, 120)).pack(side=tk.LEFT, padx=2)
+        
+        logger.info("Opened 3D erosion visualization")
     
     def create_interactive_3d_plot(self):
-        """Create interactive 3D plot using Plotly"""
+        """Create interactive 3D plot using Plotly (non-blocking)"""
         if self.current_dem is None:
             messagebox.showwarning("Warning", "Please load or generate a DEM first")
             return
         
-        try:
-            dem_data = self.current_dem
-            
-            # Create plotly 3D surface plot
-            fig = go.Figure(data=[go.Surface(z=dem_data, colorscale='Terrain')])
-            
-            fig.update_layout(
-                title='Interactive 3D DEM Visualization (Plotly)',
-                scene=dict(
-                    xaxis_title='X (pixels)',
-                    yaxis_title='Y (pixels)',
-                    zaxis_title='Elevation (m)',
-                    camera=dict(eye=dict(x=1.5, y=1.5, z=1.3))
-                ),
-                width=1000,
-                height=800
+        if go is None:
+            messagebox.showerror(
+                "Error",
+                "Plotly is not installed. Install it with: pip install plotly"
             )
-            
-            # Show in browser
-            fig.show()
-            logger.info("Opened interactive 3D Plotly visualization")
-            
-        except Exception as e:
-            logger.error(f"Error creating Plotly visualization: {e}")
-            messagebox.showerror("Error", f"Failed to create interactive visualization: {str(e)}")
+            return
+        
+        def create_plotly_async():
+            """Create Plotly visualization in background thread"""
+            try:
+                dem_data = self.current_dem
+                
+                # Create plotly 3D surface plot
+                fig = go.Figure(data=[go.Surface(z=dem_data, colorscale='Terrain')])
+                
+                fig.update_layout(
+                    title='Interactive 3D DEM Visualization (Plotly)',
+                    scene=dict(
+                        xaxis_title='X (pixels)',
+                        yaxis_title='Y (pixels)',
+                        zaxis_title='Elevation (m)',
+                        camera=dict(eye=dict(x=1.5, y=1.5, z=1.3))
+                    ),
+                    width=1000,
+                    height=800
+                )
+                
+                # Show in browser
+                fig.show()
+                logger.info("Opened interactive 3D Plotly visualization")
+                
+            except Exception as e:
+                logger.error(f"Error creating Plotly visualization: {e}")
+                self.after(0, lambda: messagebox.showerror("Error", f"Failed to create interactive visualization: {str(e)}"))
+        
+        # Run Plotly creation in background thread
+        thread = threading.Thread(target=create_plotly_async, daemon=True)
+        thread.start()
     
     # ============= LAYER COMPOSITION & LAYOUT MANAGEMENT =============
     
@@ -1759,7 +1803,6 @@ class MainWindow(tk.Tk):
                     elif layer.layer_type == "base_map":
                         try:
                             if layer.file_path.endswith(('.shp')):
-                                import geopandas as gpd
                                 gdf = gpd.read_file(layer.file_path)
                                 from rasterio.features import geometry_mask
                                 from rasterio.transform import from_bounds
@@ -1884,7 +1927,6 @@ class MainWindow(tk.Tk):
                 elif layer.layer_type == "base_map" and os.path.exists(layer.file_path):
                     try:
                         if layer.file_path.endswith(('.shp')):
-                            import geopandas as gpd
                             gdf = gpd.read_file(layer.file_path)
                             from rasterio.features import geometry_mask
                             from rasterio.transform import from_bounds

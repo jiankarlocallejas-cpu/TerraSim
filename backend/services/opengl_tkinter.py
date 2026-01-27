@@ -42,6 +42,10 @@ class TkinterOpenGLCanvas(tk.Canvas):
         # For software rendering (fallback when OpenGL unavailable)
         self.use_software_rendering = not OPENGL_AVAILABLE
         
+        # Performance optimization: cache colormaps to avoid repeated lookups
+        self._colormap_cache = {}
+        self._last_image = None  # Prevent garbage collection
+        
         logger.info(f"TkinterOpenGLCanvas created ({width}x{height}, {'OpenGL' if not self.use_software_rendering else 'Software'})")
     
     def update_terrain(self, dem: np.ndarray, colormap: str = "viridis"):
@@ -55,66 +59,108 @@ class TkinterOpenGLCanvas(tk.Canvas):
         self._render_heatmap(erosion_data, "hot")
     
     def _render_heatmap(self, data: np.ndarray, colormap: str = "viridis"):
-        """Render 2D data as heatmap"""
+        """Render 2D data as heatmap using efficient NumPy-based approach (non-blocking)"""
         try:
-            import matplotlib.pyplot as plt
-            import matplotlib.cm as cm
             from PIL import Image, ImageTk
+            import matplotlib.cm as cm  # type: ignore
             
-            # Create figure
-            fig, ax = plt.subplots(figsize=(8, 6), dpi=100)
+            # Quick validation check
+            if data.size == 0 or not np.any(np.isfinite(data)):
+                self._render_gradient_fast(data)
+                return
             
-            # Plot heatmap
-            im = ax.imshow(data, cmap=colormap, origin='upper')
-            ax.set_title(f"Terrain/Erosion Map")
-            plt.colorbar(im, ax=ax)
+            # Normalize data to 0-1 range
+            data_min = np.nanmin(data)
+            data_max = np.nanmax(data)
+            if data_max <= data_min:
+                data_max = data_min + 1e-6
             
-            # Convert to PIL image
-            fig.canvas.draw()
-            image_data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)  # type: ignore
-            image_data = image_data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            normalized = (data - data_min) / (data_max - data_min)
+            normalized = np.clip(normalized, 0, 1)
             
-            pil_image = Image.fromarray(image_data)
-            pil_image = pil_image.resize((self.width, self.height))
+            # OPTIMIZATION: Cache colormaps to avoid repeated lookups
+            if colormap not in self._colormap_cache:
+                try:
+                    self._colormap_cache[colormap] = cm.get_cmap(colormap)
+                except:
+                    self._colormap_cache[colormap] = cm.get_cmap('viridis')
             
-            # Display on canvas
+            cmap = self._colormap_cache[colormap]
+            
+            # Apply colormap to normalized data efficiently
+            # This is MUCH faster than matplotlib rendering
+            rgba_data = cmap(normalized)  # Returns (H, W, 4) array with values 0-1
+            
+            # Convert to 0-255 uint8 for PIL
+            rgba_uint8 = (rgba_data * 255).astype(np.uint8)
+            
+            # Resize to canvas dimensions using PIL for efficiency
+            pil_image = Image.fromarray(rgba_uint8, 'RGBA')
+            pil_image = pil_image.resize((self.width, self.height), Image.Resampling.LANCZOS)
+            
+            # Store image reference to prevent garbage collection
             self.image = ImageTk.PhotoImage(pil_image)
+            self._last_image = self.image  # Double reference for extra safety
+            self.delete("all")  # Clear previous content
             self.create_image(0, 0, image=self.image, anchor='nw')
-            
-            plt.close(fig)
             
         except Exception as e:
             logger.error(f"Error rendering heatmap: {e}")
-            # Fallback: simple gradient
-            self._render_gradient(data)
+            # Fallback: simple gradient (still efficient)
+            self._render_gradient_fast(data)
     
     def _render_gradient(self, data: np.ndarray):
-        """Fallback: render simple gradient"""
-        normalized = (data - data.min()) / (data.max() - data.min() + 1e-6)
-        
-        # Simple colormap
-        height, width = normalized.shape
-        scale_x = self.width / width
-        scale_y = self.height / height
-        
-        self.delete("all")
-        
-        for i in range(height):
-            for j in range(width):
-                value = normalized[i, j]
-                # Hot colormap
-                r = int(255 * min(value * 2, 1.0))
-                g = int(255 * max(0, min(value * 2 - 1, 1.0)))
-                b = int(255 * max(0, 1 - value * 2))
-                
-                color = f'#{r:02x}{g:02x}{b:02x}'
-                
-                x1 = j * scale_x
-                y1 = i * scale_y
-                x2 = x1 + scale_x + 1
-                y2 = y1 + scale_y + 1
-                
-                self.create_rectangle(x1, y1, x2, y2, fill=color, outline=color)
+        """Legacy fallback - use _render_gradient_fast instead"""
+        self._render_gradient_fast(data)
+    
+    def _render_gradient_fast(self, data: np.ndarray):
+        """Fast fallback: render heatmap using NumPy+PIL (no per-pixel operations)"""
+        try:
+            from PIL import Image, ImageTk
+            
+            # Normalize data
+            data_min = np.nanmin(data)
+            data_max = np.nanmax(data)
+            if data_max <= data_min:
+                data_max = data_min + 1e-6
+            
+            normalized = (data - data_min) / (data_max - data_min)
+            normalized = np.clip(normalized, 0, 1)
+            
+            # Create hot colormap using NumPy (no per-pixel loops!)
+            # Hot colormap: black -> red -> yellow -> white
+            height, width = normalized.shape
+            
+            # Create RGB array directly
+            rgb_data = np.zeros((height, width, 3), dtype=np.uint8)
+            
+            # Apply hot colormap using vectorized operations
+            # Red channel: 0 at bottom, 255 at top
+            rgb_data[:, :, 0] = (normalized * 255).astype(np.uint8)
+            
+            # Green channel: 0 at bottom, 255 in middle, 255 at top
+            green = np.clip(normalized * 2, 0, 1)
+            green = np.where(green > 1, 1, green)
+            rgb_data[:, :, 1] = (green * 255).astype(np.uint8)
+            
+            # Blue channel: 0 at bottom, 0 in middle, 255 at top
+            blue = np.clip((normalized - 0.5) * 2, 0, 1)
+            rgb_data[:, :, 2] = (blue * 255).astype(np.uint8)
+            
+            # Convert to PIL and resize
+            pil_image = Image.fromarray(rgb_data, 'RGB')
+            pil_image = pil_image.resize((self.width, self.height), Image.Resampling.LANCZOS)
+            
+            # Update canvas
+            self.image = ImageTk.PhotoImage(pil_image)
+            self.delete("all")
+            self.create_image(0, 0, image=self.image, anchor='nw')
+            
+        except Exception as e:
+            logger.error(f"Error in fast gradient rendering: {e}")
+            # Final fallback: solid color
+            self.delete("all")
+            self.create_rectangle(0, 0, self.width, self.height, fill='#cccccc')
 
 
 class OpenGLVisualizationWidget(tk.Frame):
@@ -123,10 +169,14 @@ class OpenGLVisualizationWidget(tk.Frame):
     def __init__(self, parent, dem: np.ndarray, **kwargs):
         super().__init__(parent, bg='white', **kwargs)
         
-        self.dem = dem.copy()
-        self.current_dem = dem.copy()
+        # Optimization: Store reference instead of copying DEM data
+        self.dem = dem
+        self.current_dem = dem
         self.erosion_data = None
         self.is_updating = False
+        
+        # Cache colormap for performance
+        self._colormap = "viridis"
         
         self._create_widgets()
     
@@ -156,7 +206,7 @@ class OpenGLVisualizationWidget(tk.Frame):
         
         # Colormap selector
         tk.Label(control_frame, text="Colormap:", bg='white').pack(side=tk.LEFT, padx=5)
-        self.colormap_var = tk.StringVar(value="viridis")
+        self.colormap_var = tk.StringVar(value=self._colormap)
         colormap_combo = ttk.Combobox(
             control_frame,
             textvariable=self.colormap_var,
@@ -178,22 +228,22 @@ class OpenGLVisualizationWidget(tk.Frame):
         self._update_visualization()
     
     def _on_colormap_changed(self, event=None):
-        """Handle colormap selection change"""
+        """Handle colormap selection change - optimized"""
+        self._colormap = self.colormap_var.get()
         self._update_visualization()
     
     def _update_visualization(self):
-        """Update the canvas visualization"""
-        colormap = self.colormap_var.get()
-        self.canvas.update_terrain(self.current_dem, colormap)
+        """Update the canvas visualization - optimized"""
+        self.canvas.update_terrain(self.current_dem, self._colormap)
     
     def update_dem(self, dem: np.ndarray):
-        """Update DEM and redraw"""
-        self.current_dem = dem.copy()
+        """Update DEM and redraw - optimized with reference storage"""
+        self.current_dem = dem
         self._update_visualization()
     
     def set_erosion_overlay(self, erosion_data: np.ndarray):
-        """Set erosion data for overlay visualization"""
-        self.erosion_data = erosion_data.copy()
+        """Set erosion data for overlay visualization - optimized"""
+        self.erosion_data = erosion_data
 
 
 class AnimatedOpenGLCanvas(tk.Frame):
@@ -274,12 +324,13 @@ class AnimatedOpenGLCanvas(tk.Frame):
         self.canvas.update_terrain(self.initial_dem)
     
     def add_frame(self, dem: np.ndarray):
-        """Add a frame to the animation"""
-        self.frames.append(dem.copy())
+        """Add a frame to the animation - optimized frame management"""
+        # Store reference instead of copy to save memory
+        self.frames.append(dem)
         self.frame_slider.config(to=len(self.frames) - 1)
     
     def _toggle_playback(self):
-        """Toggle playback"""
+        """Toggle playback with optimized state management"""
         self.is_playing = not self.is_playing
         self.play_button.config(text="⏸ Pause" if self.is_playing else "▶ Play")
         
@@ -287,25 +338,35 @@ class AnimatedOpenGLCanvas(tk.Frame):
             self._animate()
     
     def _animate(self):
-        """Animation loop"""
+        """Animation loop with optimized frame handling"""
         if not self.is_playing or self.current_frame >= len(self.frames) - 1:
             self.is_playing = False
             self.play_button.config(text="▶ Play")
             return
         
-        self.current_frame += 1
-        self.frame_slider.set(self.current_frame)
-        
-        self.after(self.update_rate, self._animate)
+        try:
+            self.current_frame += 1
+            self.frame_slider.set(self.current_frame)
+            
+            # Schedule next frame - use optimized update rate
+            self.after(self.update_rate, self._animate)
+        except Exception as e:
+            logger.error(f"Animation error: {e}")
+            self.is_playing = False
+            self.play_button.config(text="▶ Play")
     
     def _on_frame_changed(self, value):
-        """Handle frame slider change"""
+        """Handle frame slider change - optimized bounds checking"""
         if not self.is_playing:
-            self.current_frame = int(value)
-            if 0 <= self.current_frame < len(self.frames):
-                self.canvas.update_terrain(self.frames[self.current_frame])
-                self.frame_label.config(text=f"{self.current_frame}/{len(self.frames)-1}")
+            frame_idx = int(float(value))
+            num_frames = len(self.frames)
+            # Optimized bounds check
+            if 0 <= frame_idx < num_frames:
+                self.current_frame = frame_idx
+                self.canvas.update_terrain(self.frames[frame_idx])
+                self.frame_label.config(text=f"{frame_idx}/{num_frames - 1}")
     
     def _on_speed_changed(self, value):
-        """Handle speed adjustment"""
-        self.update_rate = 600 - int(value)  # Invert scale
+        """Handle speed adjustment - optimized conversion"""
+        # Clamp and convert value to int for efficiency
+        self.update_rate = max(50, min(500, 600 - int(float(value))))  # Invert scale with bounds

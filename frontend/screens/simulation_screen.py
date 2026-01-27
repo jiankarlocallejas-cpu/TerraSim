@@ -564,6 +564,10 @@ class SimulationScreen(tk.Frame):
             # Current DEM for this simulation
             current_dem = self.dem.copy()
             
+            # Track UI update timing to avoid excessive redraws
+            last_ui_update = time.time()
+            ui_update_interval = 0.2  # Update UI max every 200ms
+            
             for step in range(self.current_step, self.total_steps):
                 # Check if paused
                 while self.is_paused and self.is_running:
@@ -627,9 +631,12 @@ class SimulationScreen(tk.Frame):
                     self.stats_history['cumulative_loss'].append(cumulative_loss)
                     self.stats_history['timestamp'].append(step * self.time_step_days)
                     
-                    # Update UI
+                    # Update UI with throttling to prevent excessive redraws
                     self.current_step = step + 1
-                    self.after(0, self._update_ui, erosion_rate)
+                    current_time = time.time()
+                    if current_time - last_ui_update >= ui_update_interval:
+                        self.after(0, self._update_ui, erosion_rate)
+                        last_ui_update = current_time
                     
                     # Sleep based on speed control
                     time.sleep(self.speed_var.get() / 1000.0)
@@ -639,6 +646,9 @@ class SimulationScreen(tk.Frame):
                     self.after(0, lambda: messagebox.showerror("Simulation Error", str(e)))
                     self.is_running = False
                     break
+            
+            # Final UI update when complete
+            self.after(0, self._update_ui, np.zeros_like(self.dem))
             
             # Simulation complete
             if self.is_running:

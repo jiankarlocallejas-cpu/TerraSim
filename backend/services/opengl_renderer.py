@@ -5,6 +5,7 @@ Provides GPU-accelerated 3D terrain visualization and real-time erosion renderin
 
 import numpy as np
 import logging
+import ctypes
 from typing import Optional, Tuple
 from dataclasses import dataclass
 
@@ -257,6 +258,7 @@ class OpenGLRenderer:
             )
         
         # Create vertex positions (3D)
+        height, width = dem.shape
         x = np.linspace(0, width - 1, width)
         z = np.linspace(0, height - 1, height)
         xx, zz = np.meshgrid(x, z)
@@ -285,9 +287,9 @@ class OpenGLRenderer:
         # Create colors based on elevation
         colors = self._create_elevation_colors(dem, colormap)
         colors_flat = np.column_stack([
-            colors[:, 0, 0].ravel(),
-            colors[:, 0, 1].ravel(),
-            colors[:, 0, 2].ravel(),
+            colors[:, :, 0].ravel(),
+            colors[:, :, 1].ravel(),
+            colors[:, :, 2].ravel(),
             np.ones(len(vertices))
         ]).astype(np.float32)
         
@@ -341,8 +343,8 @@ class OpenGLRenderer:
     ) -> np.ndarray:
         """Create RGB colors based on elevation"""
         try:
-            import matplotlib.pyplot as plt
-            import matplotlib.cm as cm
+            import matplotlib.pyplot as plt  # type: ignore
+            import matplotlib.cm as cm  # type: ignore
             
             cmap = cm.get_cmap(colormap)
             
@@ -350,9 +352,9 @@ class OpenGLRenderer:
             dem_min, dem_max = dem.min(), dem.max()
             dem_normalized = (dem - dem_min) / (dem_max - dem_min + 1e-6)
             
-            # Map to RGB
+            # Map to RGBA and extract RGB
             rgba = cmap(dem_normalized)
-            rgb = rgba[:, :, :3]
+            rgb = np.asarray(rgba)[:, :, :3]  # type: ignore
             
             return rgb.astype(np.float32)
         except ImportError:
@@ -403,7 +405,7 @@ class OpenGLRenderer:
         
         mesh = self.meshes[mesh_name]
         
-        if self.shader_program:
+        if self.shader_program and mesh.vao is not None:
             glUseProgram(self.shader_program)
             glBindVertexArray(mesh.vao)
             glDrawElements(GL_TRIANGLES, mesh.vertex_count, GL_UNSIGNED_INT, None)
@@ -425,11 +427,36 @@ class OpenGLRenderer:
             return
         
         mesh = self.meshes[mesh_name]
+        expected_count = len(mesh.vertices)
+        
+        # Handle different color array dimensions
+        if colors.ndim == 1:
+            # Single channel - replicate across all channels
+            if len(colors) != expected_count:
+                logger.warning(f"Color array size {len(colors)} doesn't match vertex count {expected_count}")
+                return
+            r = g = b = colors
+        elif colors.ndim == 2:
+            # Grayscale 2D - replicate across channels
+            if colors.size != expected_count:
+                logger.warning(f"Color array size {colors.size} doesn't match vertex count {expected_count}")
+                return
+            r = g = b = colors.ravel()
+        elif colors.ndim == 3:
+            # 3D array (height, width, 3)
+            if colors.shape[0] * colors.shape[1] != expected_count:
+                logger.warning(f"Color array size {colors.shape[0] * colors.shape[1]} doesn't match vertex count {expected_count}")
+                return
+            r = colors[:, :, 0].ravel()
+            g = colors[:, :, 1].ravel()
+            b = colors[:, :, 2].ravel()
+        else:
+            logger.error(f"Unsupported color array dimensions: {colors.ndim}")
+            return
+        
         colors_flat = np.column_stack([
-            colors.ravel() if colors.ndim == 1 else colors[:, 0].ravel(),
-            colors.ravel() if colors.ndim == 1 else colors[:, 1].ravel(),
-            colors.ravel() if colors.ndim == 1 else colors[:, 2].ravel(),
-            np.ones(len(mesh.vertices))
+            r, g, b,
+            np.ones(expected_count)
         ]).astype(np.float32)
         mesh.colors = colors_flat
     
@@ -472,6 +499,3 @@ class OpenGLRenderer:
         if self.display:
             pygame.quit()
         logger.info("OpenGL Renderer shutdown")
-
-
-import ctypes  # Import at end to avoid circular imports
