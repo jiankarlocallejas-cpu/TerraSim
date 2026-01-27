@@ -36,6 +36,18 @@ class SimulationScreen(tk.Frame):
         self.total_steps = int(parameters.get('num_timesteps', 10))
         self.time_step_days = parameters.get('time_step_days', 1.0)
         
+        # Auto-run feature
+        self.auto_run_enabled = False
+        self.auto_run_iterations = 1
+        self.current_iteration = 0
+        self.iteration_results = []
+        
+        # Time series playback
+        self.is_playback_mode = False
+        self.playback_frame = 0
+        self.profile_x = None  # For elevation profile tracking
+        self.profile_y = None
+        
         # Data tracking
         self.elevation_history = [dem.copy()]
         self.erosion_history = []
@@ -97,26 +109,41 @@ class SimulationScreen(tk.Frame):
         """Create visualization area with matplotlib"""
         # Create figure with subplots
         from matplotlib.figure import Figure as MplFigure
-        self.fig = MplFigure(figsize=(8, 8), dpi=100)
+        from mpl_toolkits.mplot3d import Axes3D
+        self.fig = MplFigure(figsize=(12, 9), dpi=100)
         self.fig.patch.set_facecolor('white')
         
-        # DEM visualization with optional base map
-        self.ax_dem = self.fig.add_subplot(2, 2, 1)
-        self.ax_dem.set_title('Digital Elevation Model', fontweight='bold')
+        # 3D DEM visualization
+        self.ax_dem_3d = self.fig.add_subplot(2, 3, 1, projection='3d')
+        self.ax_dem_3d.set_title('3D Elevation Model', fontweight='bold')
+        self.ax_dem_3d.set_xlabel('X (m)')
+        self.ax_dem_3d.set_ylabel('Y (m)')
+        self.ax_dem_3d.set_zlabel('Elevation (m)')
+        
+        # Create mesh for 3D plot
+        rows, cols = self.current_dem.shape
+        self.X_mesh = np.arange(cols)
+        self.Y_mesh = np.arange(rows)
+        self.X_mesh, self.Y_mesh = np.meshgrid(self.X_mesh, self.Y_mesh)
+        
+        # Initial 3D surface
+        self.surf_dem = self.ax_dem_3d.plot_surface(
+            self.X_mesh, self.Y_mesh, self.current_dem,
+            cmap='terrain', alpha=0.8, linewidth=0
+        )
+        self.ax_dem_3d.view_init(elev=25, azim=45)
+        
+        # 2D DEM visualization
+        self.ax_dem = self.fig.add_subplot(2, 3, 2)
+        self.ax_dem.set_title('DEM (Top View)', fontweight='bold')
         self.ax_dem.set_xlabel('X (m)')
         self.ax_dem.set_ylabel('Y (m)')
         
-        # Display base map if available
-        if self.base_map is not None:
-            self.im_base = self.ax_dem.imshow(self.base_map, cmap='gray', origin='upper', alpha=0.5)
-            self.im_dem = self.ax_dem.imshow(self.current_dem, cmap='terrain', origin='upper', alpha=self.dem_opacity)
-        else:
-            self.im_dem = self.ax_dem.imshow(self.current_dem, cmap='terrain', origin='upper')
-        
+        self.im_dem = self.ax_dem.imshow(self.current_dem, cmap='terrain', origin='upper')
         self.cbar_dem = self.fig.colorbar(self.im_dem, ax=self.ax_dem, label='Elevation (m)')
         
         # Erosion rate visualization
-        self.ax_erosion = self.fig.add_subplot(2, 2, 2)
+        self.ax_erosion = self.fig.add_subplot(2, 3, 3)
         self.ax_erosion.set_title('Erosion Rate', fontweight='bold')
         self.ax_erosion.set_xlabel('X (m)')
         self.ax_erosion.set_ylabel('Y (m)')
@@ -128,7 +155,7 @@ class SimulationScreen(tk.Frame):
         self.cbar_erosion = self.fig.colorbar(self.im_erosion, ax=self.ax_erosion, label='Rate (m/year)')
         
         # Elevation change chart
-        self.ax_chart = self.fig.add_subplot(2, 2, 3)
+        self.ax_chart = self.fig.add_subplot(2, 3, 4)
         self.ax_chart.set_title('Mean Elevation Change', fontweight='bold')
         self.ax_chart.set_xlabel('Time (days)')
         self.ax_chart.set_ylabel('Elevation Change (m)')
@@ -136,12 +163,23 @@ class SimulationScreen(tk.Frame):
         self.ax_chart.grid(True, alpha=0.3)
         
         # Statistics chart
-        self.ax_stats = self.fig.add_subplot(2, 2, 4)
+        self.ax_stats = self.fig.add_subplot(2, 3, 5)
         self.ax_stats.set_title('Peak Erosion Over Time', fontweight='bold')
         self.ax_stats.set_xlabel('Time (days)')
         self.ax_stats.set_ylabel('Peak Rate (m/year)')
         self.line_peak, = self.ax_stats.plot([], [], 'r-', linewidth=2)
         self.ax_stats.grid(True, alpha=0.3)
+        
+        # Cumulative volume loss chart
+        self.ax_volume = self.fig.add_subplot(2, 3, 6)
+        self.ax_volume.set_title('Cumulative Volume Loss', fontweight='bold')
+        self.ax_volume.set_xlabel('Time (days)')
+        self.ax_volume.set_ylabel('Volume Loss (m³)')
+        self.line_volume, = self.ax_volume.plot([], [], 'g-', linewidth=2)
+        self.ax_volume.grid(True, alpha=0.3)
+        
+        # Time marker for current frame in time series
+        self.time_marker_line = None
         
         self.fig.tight_layout()
         
@@ -225,6 +263,144 @@ class SimulationScreen(tk.Frame):
             bg='#f0f0f0'
         )
         speed_scale.pack(fill=tk.X)
+        
+        # Auto-run controls
+        autorun_frame = tk.LabelFrame(
+            parent,
+            text="Auto-Run Feature",
+            font=("Arial", 10, "bold"),
+            bg='#f0f0f0',
+            fg='#2c3e50',
+            padx=10,
+            pady=10
+        )
+        autorun_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.autorun_var = tk.BooleanVar(value=False)
+        autorun_check = tk.Checkbutton(
+            autorun_frame,
+            text="Loop Simulation After Completion",
+            variable=self.autorun_var,
+            font=("Arial", 9),
+            bg='#f0f0f0',
+            command=self._toggle_autorun_options
+        )
+        autorun_check.pack(anchor=tk.W, pady=(0, 5))
+        
+        iterations_frame = tk.Frame(autorun_frame, bg='#f0f0f0')
+        iterations_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        tk.Label(iterations_frame, text="Iterations:", font=("Arial", 9), bg='#f0f0f0').pack(side=tk.LEFT)
+        
+        self.iterations_var = tk.IntVar(value=1)
+        iterations_spin = tk.Spinbox(
+            iterations_frame,
+            from_=1,
+            to=100,
+            textvariable=self.iterations_var,
+            width=5,
+            font=("Arial", 9),
+            state=tk.DISABLED
+        )
+        iterations_spin.pack(side=tk.LEFT, padx=5)
+        self.iterations_spin = iterations_spin
+        
+        self.iteration_label = tk.Label(
+            autorun_frame,
+            text="Current: 0/0",
+            font=("Arial", 9),
+            bg='#f0f0f0',
+            fg='#7f8c8d'
+        )
+        self.iteration_label.pack(anchor=tk.W)
+        
+        # Time Series Playback Controls
+        timeseries_frame = tk.LabelFrame(
+            parent,
+            text="Time Series Playback",
+            font=("Arial", 10, "bold"),
+            bg='#f0f0f0',
+            fg='#2c3e50',
+            padx=10,
+            pady=10
+        )
+        timeseries_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        tk.Label(timeseries_frame, text="Timeline:", font=("Arial", 9), bg='#f0f0f0').pack(anchor=tk.W)
+        
+        self.timeline_var = tk.IntVar(value=0)
+        self.timeline_slider = tk.Scale(
+            timeseries_frame,
+            from_=0,
+            to=1,
+            orient=tk.HORIZONTAL,
+            variable=self.timeline_var,
+            bg='#f0f0f0',
+            command=self._on_timeline_changed,
+            state=tk.DISABLED
+        )
+        self.timeline_slider.pack(fill=tk.X, pady=(0, 5))
+        
+        self.timeline_label = tk.Label(
+            timeseries_frame,
+            text="Frame: 0/0 | Time: 0.0 days",
+            font=("Arial", 8),
+            bg='#f0f0f0',
+            fg='#7f8c8d'
+        )
+        self.timeline_label.pack(anchor=tk.W, pady=(0, 5))
+        
+        # Playback buttons
+        playback_btn_frame = tk.Frame(timeseries_frame, bg='#f0f0f0')
+        playback_btn_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        self.playback_button = tk.Button(
+            playback_btn_frame,
+            text="Play Replay",
+            font=("Arial", 9),
+            bg='#3498db',
+            fg='white',
+            padx=10,
+            pady=4,
+            command=self._start_playback,
+            state=tk.DISABLED
+        )
+        self.playback_button.pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(
+            playback_btn_frame,
+            text="First Frame",
+            font=("Arial", 9),
+            bg='#95a5a6',
+            fg='white',
+            padx=10,
+            pady=4,
+            command=lambda: self._jump_to_frame(0),
+            state=tk.DISABLED
+        ).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(
+            playback_btn_frame,
+            text="Last Frame",
+            font=("Arial", 9),
+            bg='#95a5a6',
+            fg='white',
+            padx=10,
+            pady=4,
+            command=lambda: self._jump_to_frame(-1),
+            state=tk.DISABLED
+        ).pack(side=tk.LEFT, padx=2)
+        
+        self.profile_var = tk.BooleanVar(value=False)
+        profile_check = tk.Checkbutton(
+            timeseries_frame,
+            text="Show Elevation Profile Over Time",
+            variable=self.profile_var,
+            font=("Arial", 9),
+            bg='#f0f0f0',
+            state=tk.DISABLED
+        )
+        profile_check.pack(anchor=tk.W)
         
         # DEM Opacity Control (if base map is available)
         if self.base_map is not None:
@@ -348,6 +524,100 @@ class SimulationScreen(tk.Frame):
         )
         export_button.pack(fill=tk.X)
     
+    def _toggle_autorun_options(self):
+        """Enable/disable auto-run options"""
+        state = tk.NORMAL if self.autorun_var.get() else tk.DISABLED
+        self.iterations_spin.config(state=state)
+    
+    def _on_timeline_changed(self, value):
+        """Handle timeline slider changes during playback"""
+        if self.is_playback_mode:
+            frame = int(float(value))
+            self._display_frame(frame)
+    
+    def _start_playback(self):
+        """Start time series playback"""
+        if len(self.elevation_history) < 2:
+            messagebox.showwarning("Playback", "No simulation data to replay.")
+            return
+        
+        self.is_playback_mode = True
+        self.playback_frame = 0
+        self.playback_button.config(state=tk.DISABLED)
+        
+        # Auto-advance through frames
+        self._advance_playback()
+    
+    def _advance_playback(self):
+        """Advance to next frame in playback"""
+        if not self.is_playback_mode or self.playback_frame >= len(self.elevation_history) - 1:
+            self.is_playback_mode = False
+            self.playback_button.config(state=tk.NORMAL)
+            return
+        
+        self.playback_frame += 1
+        self._display_frame(self.playback_frame)
+        self.after(200, self._advance_playback)  # 200ms per frame
+    
+    def _display_frame(self, frame_idx):
+        """Display a specific frame from history"""
+        if frame_idx < 0 or frame_idx >= len(self.elevation_history):
+            return
+        
+        # Update timeline
+        self.timeline_var.set(frame_idx)
+        self.timeline_label.config(
+            text=f"Frame: {frame_idx}/{len(self.elevation_history)-1} | Time: {frame_idx * self.time_step_days:.1f} days"
+        )
+        
+        # Get DEM for this frame
+        dem_frame = self.elevation_history[frame_idx]
+        erosion_frame = self.erosion_history[frame_idx] if frame_idx < len(self.erosion_history) else np.zeros_like(dem_frame)
+        
+        # Update 3D surface
+        self.ax_dem_3d.clear()
+        self.ax_dem_3d.set_title('3D Elevation Model', fontweight='bold')
+        self.ax_dem_3d.set_xlabel('X (m)')
+        self.ax_dem_3d.set_ylabel('Y (m)')
+        self.ax_dem_3d.set_zlabel('Elevation (m)')
+        
+        self.ax_dem_3d.plot_surface(
+            self.X_mesh, self.Y_mesh, dem_frame,
+            cmap='terrain', alpha=0.8, linewidth=0
+        )
+        self.ax_dem_3d.view_init(elev=25, azim=45)
+        self.ax_dem_3d.set_zlim(self.dem.min(), self.dem.max())
+        
+        # Update 2D DEM
+        self.im_dem.set_data(dem_frame)
+        self.im_dem.set_clim(dem_frame.min(), dem_frame.max())
+        
+        # Update erosion rate
+        self.im_erosion.set_data(erosion_frame)
+        self.im_erosion.set_clim(0, np.percentile(erosion_frame[erosion_frame > 0], 95) if np.any(erosion_frame > 0) else 1)
+        
+        # Add time marker on charts
+        current_time = frame_idx * self.time_step_days
+        
+        # Clear previous marker
+        for ax in [self.ax_chart, self.ax_stats, self.ax_volume]:
+            for line in ax.get_lines():
+                if line.get_label() == 'time_marker':
+                    line.remove()
+        
+        # Add new markers
+        if len(self.stats_history['timestamp']) > 0:
+            for ax in [self.ax_chart, self.ax_stats, self.ax_volume]:
+                ax.axvline(current_time, color='red', linestyle='--', alpha=0.5, linewidth=1, label='time_marker')
+        
+        self.canvas.draw_idle()
+    
+    def _jump_to_frame(self, frame_idx):
+        """Jump to specific frame (use -1 for last frame)"""
+        if frame_idx == -1:
+            frame_idx = len(self.elevation_history) - 1
+        self._display_frame(frame_idx)
+    
     def _update_dem_opacity(self, value):
         """Update DEM overlay opacity"""
         if self.base_map is not None and hasattr(self, 'im_dem'):
@@ -364,11 +634,23 @@ class SimulationScreen(tk.Frame):
         self.is_paused = False
         self.start_time = time.time()
         
+        # Setup auto-run if enabled
+        if self.autorun_var.get():
+            self.auto_run_enabled = True
+            self.auto_run_iterations = self.iterations_var.get()
+            self.current_iteration = 1
+            self.iteration_results = []
+            self._update_iteration_label()
+        else:
+            self.auto_run_enabled = False
+            self.current_iteration = 0
+        
         self.start_button.config(state=tk.DISABLED)
         self.pause_button.config(state=tk.NORMAL)
         self.reset_button.config(state=tk.DISABLED)
+        self.iterations_spin.config(state=tk.DISABLED)
         
-        logger.info("Starting real-time simulation")
+        logger.info(f"Starting real-time simulation (iteration {self.current_iteration}/{self.auto_run_iterations if self.auto_run_enabled else 1})")
         
         # Run simulation in background thread
         self.simulation_thread = threading.Thread(target=self._run_simulation_loop, daemon=True)
@@ -491,7 +773,21 @@ class SimulationScreen(tk.Frame):
     
     def _update_visualizations(self, erosion_rate: np.ndarray):
         """Update matplotlib plots"""
-        # Update DEM
+        # Update 3D DEM surface
+        self.ax_dem_3d.clear()
+        self.ax_dem_3d.set_title('3D Elevation Model', fontweight='bold')
+        self.ax_dem_3d.set_xlabel('X (m)')
+        self.ax_dem_3d.set_ylabel('Y (m)')
+        self.ax_dem_3d.set_zlabel('Elevation (m)')
+        
+        self.ax_dem_3d.plot_surface(
+            self.X_mesh, self.Y_mesh, self.current_dem,
+            cmap='terrain', alpha=0.8, linewidth=0
+        )
+        self.ax_dem_3d.view_init(elev=25, azim=45)
+        self.ax_dem_3d.set_zlim(self.dem.min(), self.dem.max())
+        
+        # Update 2D DEM
         self.im_dem.set_data(self.current_dem)
         self.im_dem.set_clim(self.current_dem.min(), self.current_dem.max())
         
@@ -516,6 +812,16 @@ class SimulationScreen(tk.Frame):
             )
             self.ax_stats.relim()
             self.ax_stats.autoscale_view()
+        
+        # Update volume loss chart
+        if self.stats_history['timestamp']:
+            cumulative_volume = np.abs(np.cumsum(self.stats_history['cumulative_loss']))
+            self.line_volume.set_data(
+                self.stats_history['timestamp'],
+                cumulative_volume
+            )
+            self.ax_volume.relim()
+            self.ax_volume.autoscale_view()
         
         self.canvas.draw_idle()
     
@@ -589,18 +895,95 @@ Max Peak:        {np.max(self.stats_history['peak_erosion']):.6f} m/yr
     
     def _on_simulation_complete(self):
         """Called when simulation finishes"""
-        self.start_button.config(state=tk.NORMAL, text="▶ Start")
-        self.pause_button.config(state=tk.DISABLED)
-        self.reset_button.config(state=tk.NORMAL)
+        # Store results from this iteration
+        iteration_data = {
+            'iteration': self.current_iteration,
+            'steps': self.current_step,
+            'mean_erosion': np.mean(self.stats_history['mean_erosion']) if self.stats_history['mean_erosion'] else 0,
+            'peak_erosion': np.max(self.stats_history['peak_erosion']) if self.stats_history['peak_erosion'] else 0,
+            'total_volume_loss': abs(np.sum(self.stats_history['cumulative_loss'])) if self.stats_history['cumulative_loss'] else 0
+        }
+        self.iteration_results.append(iteration_data)
         
-        messagebox.showinfo(
-            "Simulation Complete",
-            f"Simulation finished after {self.current_step} timesteps\n"
-            f"Total simulated time: {self.current_step * self.time_step_days:.1f} days"
-        )
-        
-        if self.on_complete:
-            self.on_complete()
+        # Check if should auto-run next iteration
+        if self.auto_run_enabled and self.current_iteration < self.auto_run_iterations:
+            logger.info(f"Auto-running iteration {self.current_iteration + 1}/{self.auto_run_iterations}")
+            
+            # Prepare for next iteration
+            self.current_iteration += 1
+            self.current_step = 0
+            self.current_dem = self.dem.copy()
+            self.elevation_history = [self.dem.copy()]
+            self.erosion_history = []
+            self.stats_history = {
+                'mean_erosion': [],
+                'peak_erosion': [],
+                'cumulative_loss': [],
+                'timestamp': []
+            }
+            
+            # Update UI
+            self._update_iteration_label()
+            self.progress_var.set(0)
+            self.progress_label.config(text="Step: 0/0 (0%)")
+            self.time_label.config(text="Simulated Time: 0 days")
+            self._update_stats_display()
+            
+            # Restart simulation
+            self.is_running = True
+            self.is_paused = False
+            self.pause_button.config(state=tk.NORMAL)
+            self.simulation_thread = threading.Thread(target=self._run_simulation_loop, daemon=True)
+            self.simulation_thread.start()
+        else:
+            # Final completion
+            self.start_button.config(state=tk.NORMAL, text="▶ Start")
+            self.pause_button.config(state=tk.DISABLED)
+            self.reset_button.config(state=tk.NORMAL)
+            self.iterations_spin.config(state=tk.NORMAL if self.autorun_var.get() else tk.DISABLED)
+            
+            # Enable time series playback controls
+            self.timeline_slider.config(state=tk.NORMAL, to=len(self.elevation_history)-1)
+            self.playback_button.config(state=tk.NORMAL)
+            self.profile_var.set(False)
+            # Update buttons in playback frame
+            for child in self.timeline_slider.master.winfo_children():
+                if isinstance(child, tk.Button):
+                    child.config(state=tk.NORMAL)
+            
+            if self.auto_run_enabled:
+                # Show summary of all iterations
+                summary = f"Auto-run completed!\n\nTotal iterations: {self.current_iteration}\n\n"
+                summary += "Iteration Results:\n"
+                for result in self.iteration_results:
+                    summary += f"\n[{result['iteration']}] Mean erosion: {result['mean_erosion']:.6f} m/yr\n"
+                    summary += f"    Peak erosion: {result['peak_erosion']:.6f} m/yr\n"
+                    summary += f"    Volume loss: {result['total_volume_loss']:.2e} m³"
+                
+                messagebox.showinfo("Auto-Run Complete", summary)
+                self.auto_run_enabled = False
+                self.current_iteration = 0
+                self.iteration_results = []
+                self._update_iteration_label()
+            else:
+                messagebox.showinfo(
+                    "Simulation Complete",
+                    f"Simulation finished after {self.current_step} timesteps\n"
+                    f"Total simulated time: {self.current_step * self.time_step_days:.1f} days"
+                )
+            
+            if self.on_complete:
+                self.on_complete()
+    
+    def _update_iteration_label(self):
+        """Update iteration counter display"""
+        if self.auto_run_enabled and self.auto_run_iterations > 0:
+            self.iteration_label.config(
+                text=f"Current: {self.current_iteration}/{self.auto_run_iterations}",
+                fg='#27ae60' if self.current_iteration > 0 else '#7f8c8d'
+            )
+        else:
+            self.iteration_label.config(text="Current: 0/0", fg='#7f8c8d')
     
     def export_simulation(self):
         """Export simulation results"""

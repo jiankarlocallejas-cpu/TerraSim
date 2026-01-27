@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     
     # First superuser
     FIRST_SUPERUSER: str = os.getenv("FIRST_SUPERUSER", "admin@terrasim.org")
-    FIRST_SUPERUSER_PASSWORD: str = os.getenv("FIRST_SUPERUSER_PASSWORD", "")
+    FIRST_SUPERUSER_PASSWORD: str = os.getenv("FIRST_SUPERUSER_PASSWORD", "TerraSim2025")
 
     class Config:
         case_sensitive = True

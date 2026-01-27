@@ -11,7 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Use pbkdf2_sha256 (no 72-byte limit, built-in), with bcrypt as fallback for legacy hashes
+pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 
 
 def create_access_token(
@@ -42,7 +43,10 @@ def verify_token(token: str) -> Optional[str]:
 
 
 def get_password_hash(password: str) -> str:
-    """Hash a password"""
+    """Hash a password (bcrypt has 72-byte limit)"""
+    # Bcrypt has a maximum password length of 72 bytes
+    if len(password) > 72:
+        password = password[:72]
     return pwd_context.hash(password)
 
 
