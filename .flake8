@@ -1,0 +1,16 @@
+[flake8]
+max-line-length = 120
+ignore = 
+    E501,
+    E226,
+    W503,
+    W504,
+    F403,
+    F401,
+exclude = 
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .venv,
+    node_modules

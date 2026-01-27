@@ -1,5 +1,5 @@
 """
-Heatmap Simulation Screen - Focused erosion visualization with heatmaps only
+Heatmap Simulation Screen - Focused erosion visualization with OpenGL rendering
 """
 
 import tkinter as tk
@@ -8,10 +8,19 @@ import numpy as np
 import threading
 import time
 from typing import Optional, Callable, Dict, Any
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import logging
+import sys
+from pathlib import Path
+
+# Add backend to path
+backend_path = Path(__file__).parent.parent.parent / "backend"
+if str(backend_path) not in sys.path:
+    sys.path.insert(0, str(backend_path))
+
+try:
+    from backend.services.opengl_tkinter import OpenGLVisualizationWidget, AnimatedOpenGLCanvas  # type: ignore
+except (ImportError, ModuleNotFoundError):
+    from services.opengl_tkinter import OpenGLVisualizationWidget, AnimatedOpenGLCanvas  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -82,66 +91,18 @@ class HeatmapSimulationScreen(tk.Frame):
         self._create_control_panel(right_panel)
     
     def _create_heatmap_panel(self, parent):
-        """Create heatmap and time series visualization area"""
-        self.fig = Figure(figsize=(14, 9), dpi=100)
-        self.fig.patch.set_facecolor('white')
+        """Create heatmap visualization using OpenGL"""
+        # Use animated canvas for time series
+        self.visualization_widget = AnimatedOpenGLCanvas(parent, self.dem)
+        self.visualization_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Elevation heatmap
-        self.ax_elevation = self.fig.add_subplot(2, 3, 1)
-        self.ax_elevation.set_title('Land Elevation (m)', fontweight='bold')
-        self.im_elevation = self.ax_elevation.imshow(self.dem, cmap='viridis', origin='upper')
-        self.cbar_elev = self.fig.colorbar(self.im_elevation, ax=self.ax_elevation)
-        
-        # Erosion rate heatmap
-        self.ax_erosion_rate = self.fig.add_subplot(2, 3, 2)
-        self.ax_erosion_rate.set_title('Erosion Rate (m/yr)', fontweight='bold')
-        self.im_erosion_rate = self.ax_erosion_rate.imshow(
-            np.zeros_like(self.dem),
-            cmap='hot',
-            origin='upper'
-        )
-        self.cbar_ero_rate = self.fig.colorbar(self.im_erosion_rate, ax=self.ax_erosion_rate)
-        
-        # Cumulative erosion heatmap
-        self.ax_cumulative = self.fig.add_subplot(2, 3, 3)
-        self.ax_cumulative.set_title('Cumulative Loss (m)', fontweight='bold')
-        self.im_cumulative = self.ax_cumulative.imshow(
-            np.zeros_like(self.dem),
-            cmap='RdYlBu_r',
-            origin='upper'
-        )
-        self.cbar_cum = self.fig.colorbar(self.im_cumulative, ax=self.ax_cumulative)
-        
-        # Mean erosion time series
-        self.ax_mean_ts = self.fig.add_subplot(2, 3, 4)
-        self.ax_mean_ts.set_title('Mean Erosion Over Time', fontweight='bold')
-        self.ax_mean_ts.set_xlabel('Time (days)')
-        self.ax_mean_ts.set_ylabel('Erosion Rate (m/yr)')
-        self.line_mean, = self.ax_mean_ts.plot([], [], 'b-', linewidth=2)
-        self.ax_mean_ts.grid(True, alpha=0.3)
-        
-        # Peak erosion time series
-        self.ax_peak_ts = self.fig.add_subplot(2, 3, 5)
-        self.ax_peak_ts.set_title('Peak Erosion Over Time', fontweight='bold')
-        self.ax_peak_ts.set_xlabel('Time (days)')
-        self.ax_peak_ts.set_ylabel('Peak Rate (m/yr)')
-        self.line_peak, = self.ax_peak_ts.plot([], [], 'r-', linewidth=2)
-        self.ax_peak_ts.grid(True, alpha=0.3)
-        
-        # Cumulative volume loss time series
-        self.ax_volume_ts = self.fig.add_subplot(2, 3, 6)
-        self.ax_volume_ts.set_title('Cumulative Volume Loss', fontweight='bold')
-        self.ax_volume_ts.set_xlabel('Time (days)')
-        self.ax_volume_ts.set_ylabel('Volume Loss (m³)')
-        self.line_volume, = self.ax_volume_ts.plot([], [], 'g-', linewidth=2)
-        self.ax_volume_ts.grid(True, alpha=0.3)
-        
-        self.fig.tight_layout()
-        
-        # Embed in tkinter
-        self.canvas = FigureCanvasTkAgg(self.fig, master=parent)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Data tracking
+        self.heatmap_data = {
+            'mean_erosion': [],
+            'peak_erosion': [],
+            'volume_loss': [],
+            'timestamps': []
+        }
     
     def _create_control_panel(self, parent):
         """Create control panel"""
@@ -404,46 +365,11 @@ class HeatmapSimulationScreen(tk.Frame):
         simulated_time = self.current_step * self.time_step_days
         self.time_label.config(text=f"Time: {simulated_time:.1f} days")
         
-        # Update heatmaps
-        self.im_elevation.set_data(self.current_dem)
-        self.im_elevation.set_clim(self.current_dem.min(), self.current_dem.max())
-        
-        self.im_erosion_rate.set_data(erosion_rate)
-        if np.any(erosion_rate > 0):
-            self.im_erosion_rate.set_clim(0, np.percentile(erosion_rate[erosion_rate > 0], 95))
-        
-        self.im_cumulative.set_data(cumulative_erosion)
-        if np.any(cumulative_erosion > 0):
-            self.im_cumulative.set_clim(0, cumulative_erosion.max())
-        
-        # Update time series charts
-        if self.stats_history['timestamp']:
-            # Mean erosion over time
-            self.line_mean.set_data(
-                self.stats_history['timestamp'],
-                self.stats_history['mean_erosion']
-            )
-            self.ax_mean_ts.relim()
-            self.ax_mean_ts.autoscale_view()
-            
-            # Peak erosion over time
-            self.line_peak.set_data(
-                self.stats_history['timestamp'],
-                self.stats_history['peak_erosion']
-            )
-            self.ax_peak_ts.relim()
-            self.ax_peak_ts.autoscale_view()
-            
-            # Cumulative volume loss over time
-            self.line_volume.set_data(
-                self.stats_history['timestamp'],
-                self.stats_history['cumulative_loss']
-            )
-            self.ax_volume_ts.relim()
-            self.ax_volume_ts.autoscale_view()
+        # Update OpenGL visualization
+        if hasattr(self, 'visualization_widget'):
+            self.visualization_widget.add_frame(self.current_dem)
         
         self._update_stats_display()
-        self.canvas.draw_idle()
     
     def _update_stats_display(self):
         """Update statistics panel"""

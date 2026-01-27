@@ -49,7 +49,15 @@ a = Analysis(
         'numpy',
         'pandas',
         'scipy',
-        'sklearn'
+        'sklearn',
+        'OpenGL',
+        'OpenGL.GL',
+        'OpenGL.GLU',
+        'OpenGL.GL.shaders',
+        'pygame',
+        'pygame.locals',
+        'glm',
+        'moderngl'
     ],
     hookspath=[],
     hooksconfig={{}},

@@ -35,3 +35,10 @@ passlib[bcrypt]>=1.7.4
 python-dotenv>=1.0.0
 alembic>=1.13.0
 mypy>=1.5.0
+# OpenGL Dependencies for GPU-accelerated rendering
+PyOpenGL>=3.1.5
+PyOpenGL_accelerate>=3.1.5
+pygame>=2.2.0
+PyGLM>=2.7.0
+moderngl>=5.8.0
+

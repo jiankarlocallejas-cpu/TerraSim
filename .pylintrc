@@ -1,0 +1,13 @@
+[MASTER]
+disable=
+    wildcard-import,
+    unused-wildcard-import,
+    import-error,
+    unbound-method,
+    no-member,
+
+[FORMAT]
+max-line-length=120
+
+[DESIGN]
+max-locals=20

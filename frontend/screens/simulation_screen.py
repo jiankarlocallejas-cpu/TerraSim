@@ -1,5 +1,5 @@
 """
-Simulation Screen - Interactive real-time erosion simulation with time-stepping
+Simulation Screen - Interactive real-time erosion simulation with OpenGL rendering
 """
 
 import tkinter as tk
@@ -9,10 +9,19 @@ import threading
 import time
 from typing import Optional, Callable, Dict, Any, Union
 from datetime import datetime
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.animation import FuncAnimation
 import logging
+import sys
+from pathlib import Path
+
+# Add backend to path
+backend_path = Path(__file__).parent.parent.parent / "backend"
+if str(backend_path) not in sys.path:
+    sys.path.insert(0, str(backend_path))
+
+try:
+    from backend.services.opengl_tkinter import OpenGLVisualizationWidget, AnimatedOpenGLCanvas  # type: ignore
+except (ImportError, ModuleNotFoundError):
+    from services.opengl_tkinter import OpenGLVisualizationWidget, AnimatedOpenGLCanvas  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -106,87 +115,14 @@ class SimulationScreen(tk.Frame):
         self._create_control_panel(right_panel)
     
     def _create_visualization_panel(self, parent):
-        """Create visualization area with matplotlib"""
-        # Create figure with subplots
-        from matplotlib.figure import Figure as MplFigure
-        from mpl_toolkits.mplot3d import Axes3D
-        self.fig = MplFigure(figsize=(12, 9), dpi=100)
-        self.fig.patch.set_facecolor('white')
+        """Create visualization area with OpenGL rendering"""
+        # Use OpenGL visualization widget
+        self.visualization_widget = OpenGLVisualizationWidget(parent, self.current_dem)
+        self.visualization_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # 3D DEM visualization
-        self.ax_dem_3d = self.fig.add_subplot(2, 3, 1, projection='3d')
-        self.ax_dem_3d.set_title('3D Elevation Model', fontweight='bold')
-        self.ax_dem_3d.set_xlabel('X (m)')
-        self.ax_dem_3d.set_ylabel('Y (m)')
-        self.ax_dem_3d.set_zlabel('Elevation (m)')
-        
-        # Create mesh for 3D plot
-        rows, cols = self.current_dem.shape
-        self.X_mesh = np.arange(cols)
-        self.Y_mesh = np.arange(rows)
-        self.X_mesh, self.Y_mesh = np.meshgrid(self.X_mesh, self.Y_mesh)
-        
-        # Initial 3D surface
-        self.surf_dem = self.ax_dem_3d.plot_surface(
-            self.X_mesh, self.Y_mesh, self.current_dem,
-            cmap='terrain', alpha=0.8, linewidth=0
-        )
-        self.ax_dem_3d.view_init(elev=25, azim=45)
-        
-        # 2D DEM visualization
-        self.ax_dem = self.fig.add_subplot(2, 3, 2)
-        self.ax_dem.set_title('DEM (Top View)', fontweight='bold')
-        self.ax_dem.set_xlabel('X (m)')
-        self.ax_dem.set_ylabel('Y (m)')
-        
-        self.im_dem = self.ax_dem.imshow(self.current_dem, cmap='terrain', origin='upper')
-        self.cbar_dem = self.fig.colorbar(self.im_dem, ax=self.ax_dem, label='Elevation (m)')
-        
-        # Erosion rate visualization
-        self.ax_erosion = self.fig.add_subplot(2, 3, 3)
-        self.ax_erosion.set_title('Erosion Rate', fontweight='bold')
-        self.ax_erosion.set_xlabel('X (m)')
-        self.ax_erosion.set_ylabel('Y (m)')
-        self.im_erosion = self.ax_erosion.imshow(
-            np.zeros_like(self.dem),
-            cmap='YlOrRd',
-            origin='upper'
-        )
-        self.cbar_erosion = self.fig.colorbar(self.im_erosion, ax=self.ax_erosion, label='Rate (m/year)')
-        
-        # Elevation change chart
-        self.ax_chart = self.fig.add_subplot(2, 3, 4)
-        self.ax_chart.set_title('Mean Elevation Change', fontweight='bold')
-        self.ax_chart.set_xlabel('Time (days)')
-        self.ax_chart.set_ylabel('Elevation Change (m)')
-        self.line_elev, = self.ax_chart.plot([], [], 'b-', linewidth=2)
-        self.ax_chart.grid(True, alpha=0.3)
-        
-        # Statistics chart
-        self.ax_stats = self.fig.add_subplot(2, 3, 5)
-        self.ax_stats.set_title('Peak Erosion Over Time', fontweight='bold')
-        self.ax_stats.set_xlabel('Time (days)')
-        self.ax_stats.set_ylabel('Peak Rate (m/year)')
-        self.line_peak, = self.ax_stats.plot([], [], 'r-', linewidth=2)
-        self.ax_stats.grid(True, alpha=0.3)
-        
-        # Cumulative volume loss chart
-        self.ax_volume = self.fig.add_subplot(2, 3, 6)
-        self.ax_volume.set_title('Cumulative Volume Loss', fontweight='bold')
-        self.ax_volume.set_xlabel('Time (days)')
-        self.ax_volume.set_ylabel('Volume Loss (m³)')
-        self.line_volume, = self.ax_volume.plot([], [], 'g-', linewidth=2)
-        self.ax_volume.grid(True, alpha=0.3)
-        
-        # Time marker for current frame in time series
-        self.time_marker_line = None
-        
-        self.fig.tight_layout()
-        
-        # Embed in tkinter
-        self.canvas = FigureCanvasTkAgg(self.fig, master=parent)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Track rendering updates
+        self.last_render_update = 0
+        self.render_update_interval = 0.1  # Update every 100ms
     
     def _create_control_panel(self, parent):
         """Create control and statistics panel"""
@@ -572,45 +508,10 @@ class SimulationScreen(tk.Frame):
         
         # Get DEM for this frame
         dem_frame = self.elevation_history[frame_idx]
-        erosion_frame = self.erosion_history[frame_idx] if frame_idx < len(self.erosion_history) else np.zeros_like(dem_frame)
         
-        # Update 3D surface
-        self.ax_dem_3d.clear()
-        self.ax_dem_3d.set_title('3D Elevation Model', fontweight='bold')
-        self.ax_dem_3d.set_xlabel('X (m)')
-        self.ax_dem_3d.set_ylabel('Y (m)')
-        self.ax_dem_3d.set_zlabel('Elevation (m)')
-        
-        self.ax_dem_3d.plot_surface(
-            self.X_mesh, self.Y_mesh, dem_frame,
-            cmap='terrain', alpha=0.8, linewidth=0
-        )
-        self.ax_dem_3d.view_init(elev=25, azim=45)
-        self.ax_dem_3d.set_zlim(self.dem.min(), self.dem.max())
-        
-        # Update 2D DEM
-        self.im_dem.set_data(dem_frame)
-        self.im_dem.set_clim(dem_frame.min(), dem_frame.max())
-        
-        # Update erosion rate
-        self.im_erosion.set_data(erosion_frame)
-        self.im_erosion.set_clim(0, np.percentile(erosion_frame[erosion_frame > 0], 95) if np.any(erosion_frame > 0) else 1)
-        
-        # Add time marker on charts
-        current_time = frame_idx * self.time_step_days
-        
-        # Clear previous marker
-        for ax in [self.ax_chart, self.ax_stats, self.ax_volume]:
-            for line in ax.get_lines():
-                if line.get_label() == 'time_marker':
-                    line.remove()
-        
-        # Add new markers
-        if len(self.stats_history['timestamp']) > 0:
-            for ax in [self.ax_chart, self.ax_stats, self.ax_volume]:
-                ax.axvline(current_time, color='red', linestyle='--', alpha=0.5, linewidth=1, label='time_marker')
-        
-        self.canvas.draw_idle()
+        # Update visualization widget
+        if hasattr(self, 'visualization_widget'):
+            self.visualization_widget.update_dem(dem_frame)
     
     def _jump_to_frame(self, frame_idx):
         """Jump to specific frame (use -1 for last frame)"""
@@ -620,10 +521,7 @@ class SimulationScreen(tk.Frame):
     
     def _update_dem_opacity(self, value):
         """Update DEM overlay opacity"""
-        if self.base_map is not None and hasattr(self, 'im_dem'):
-            self.dem_opacity = float(value)
-            self.im_dem.set_alpha(self.dem_opacity)
-            self.canvas.draw_idle()
+        self.dem_opacity = float(value)
     
     def start_simulation(self):
         """Start the simulation in a background thread"""
@@ -772,58 +670,10 @@ class SimulationScreen(tk.Frame):
         self._update_stats_display()
     
     def _update_visualizations(self, erosion_rate: np.ndarray):
-        """Update matplotlib plots"""
-        # Update 3D DEM surface
-        self.ax_dem_3d.clear()
-        self.ax_dem_3d.set_title('3D Elevation Model', fontweight='bold')
-        self.ax_dem_3d.set_xlabel('X (m)')
-        self.ax_dem_3d.set_ylabel('Y (m)')
-        self.ax_dem_3d.set_zlabel('Elevation (m)')
-        
-        self.ax_dem_3d.plot_surface(
-            self.X_mesh, self.Y_mesh, self.current_dem,
-            cmap='terrain', alpha=0.8, linewidth=0
-        )
-        self.ax_dem_3d.view_init(elev=25, azim=45)
-        self.ax_dem_3d.set_zlim(self.dem.min(), self.dem.max())
-        
-        # Update 2D DEM
-        self.im_dem.set_data(self.current_dem)
-        self.im_dem.set_clim(self.current_dem.min(), self.current_dem.max())
-        
-        # Update erosion rate
-        self.im_erosion.set_data(erosion_rate)
-        self.im_erosion.set_clim(0, np.percentile(erosion_rate, 95))
-        
-        # Update elevation change chart
-        if self.stats_history['timestamp']:
-            self.line_elev.set_data(
-                self.stats_history['timestamp'],
-                self.stats_history['cumulative_loss']
-            )
-            self.ax_chart.relim()
-            self.ax_chart.autoscale_view()
-        
-        # Update peak erosion chart
-        if self.stats_history['timestamp']:
-            self.line_peak.set_data(
-                self.stats_history['timestamp'],
-                self.stats_history['peak_erosion']
-            )
-            self.ax_stats.relim()
-            self.ax_stats.autoscale_view()
-        
-        # Update volume loss chart
-        if self.stats_history['timestamp']:
-            cumulative_volume = np.abs(np.cumsum(self.stats_history['cumulative_loss']))
-            self.line_volume.set_data(
-                self.stats_history['timestamp'],
-                cumulative_volume
-            )
-            self.ax_volume.relim()
-            self.ax_volume.autoscale_view()
-        
-        self.canvas.draw_idle()
+        """Update OpenGL visualization"""
+        # Update visualization widget with current DEM
+        if hasattr(self, 'visualization_widget'):
+            self.visualization_widget.update_dem(self.current_dem)
     
     def _update_stats_display(self):
         """Update statistics text display"""

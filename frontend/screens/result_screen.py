@@ -1,15 +1,22 @@
 """
-Result Screen - Display and export simulation results
+Result Screen - Display and export simulation results with OpenGL visualization
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import numpy as np
 from typing import Optional, Dict, Any
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import json
 from datetime import datetime
+import sys
+from pathlib import Path
+
+# Add backend to path
+backend_path = Path(__file__).parent.parent.parent / "backend"
+if str(backend_path) not in sys.path:
+    sys.path.insert(0, str(backend_path))
+
+from services.opengl_tkinter import OpenGLVisualizationWidget
 
 
 class ResultScreen(tk.Frame):
