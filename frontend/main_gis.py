@@ -475,12 +475,19 @@ class TerraSim_GIS(tk.Tk):
             results = simulator.run_simulation()
             
             if results and len(results) > 0:
+                # Add all frames to animation viewer
+                for snapshot in results:
+                    self.world_machine_viewer.add_animation_frame(snapshot.elevation)
+                
                 # Add final erosion result to 3D viewer
                 final_snapshot = results[-1]
                 self.world_machine_viewer.add_erosion_layer(final_snapshot.elevation)
                 
-                self._set_status("Simulation complete")
-                messagebox.showinfo("Success", "Simulation completed!")
+                # Render initial frame
+                self.world_machine_viewer.render_view()
+                
+                self._set_status(f"✓ Simulation complete ({len(results)} frames)")
+                messagebox.showinfo("Success", f"Simulation completed!\n{len(results)} frames captured")
             
         except Exception as e:
             messagebox.showerror("Error", f"Simulation failed: {e}")

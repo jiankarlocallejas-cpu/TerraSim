@@ -209,6 +209,7 @@ htmlcov/
 .tox/
 .hypothesis/
 *.cover
+tests/test_*.py
 
 # ============================================================================
 # JUPYTER NOTEBOOKS
@@ -249,6 +250,17 @@ private/
 *.pdf
 *.ppt
 *.pptx
+
+# ============================================================================
+# ADMIN FILES (DO NOT TRACK)
+# ============================================================================
+admin_console.py
+email_setup.py
+database_setup.py
+backend/.email_config
+backend/.cloud_config
+terrasim.log
+backup_terrasim_*.db
 
 # ============================================================================
 # MISC

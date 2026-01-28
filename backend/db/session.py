@@ -55,10 +55,12 @@ def receive_connect(dbapi_conn, connection_record):
         cursor.close()
 
 
-@event.listens_for(engine, "pool_connect")
-def receive_pool_connect(dbapi_conn, connection_record):
-    """Log connection pool events."""
-    logger.debug("Database connection established")
+# Only register pool_connect for SQLite (PostgreSQL connection pooling doesn't support this event)
+if db_url.startswith("sqlite"):
+    @event.listens_for(engine, "pool_connect")
+    def receive_pool_connect(dbapi_conn, connection_record):
+        """Log connection pool events."""
+        logger.debug("Database connection established")
 
 
 # Create a scoped session factory

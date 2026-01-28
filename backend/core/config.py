@@ -37,24 +37,35 @@ class Settings(BaseSettings):
         raise ValueError(v)
 
     # Database settings
+    USE_SQLITE: bool = os.getenv("USE_SQLITE", "true").lower() == "true"
+    DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL", None)  # Cloud database connection string
+    DATABASE_TYPE: str = os.getenv("DATABASE_TYPE", "sqlite")  # 'sqlite' or 'postgresql'
+    
+    # Local PostgreSQL settings (if not using cloud)
     POSTGRES_SERVER: str = os.getenv("POSTGRES_SERVER", "localhost")
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "")
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "terrasim")
-    USE_SQLITE: bool = os.getenv("USE_SQLITE", "true").lower() == "true"
     DATABASE_URI: Optional[str] = None
 
     @root_validator(pre=False, skip_on_failure=True)
     def assemble_db_connection(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        # Set DATABASE_URI based on USE_SQLITE setting
-        if values.get('USE_SQLITE'):
+        # Priority 1: Use cloud database URL if provided
+        if values.get('DATABASE_URL'):
+            values['DATABASE_URI'] = values.get('DATABASE_URL')
+            values['DATABASE_TYPE'] = 'postgresql'
+        # Priority 2: Use SQLite (local)
+        elif values.get('USE_SQLITE'):
             values['DATABASE_URI'] = "sqlite:///./terrasim.db"
+            values['DATABASE_TYPE'] = 'sqlite'
+        # Priority 3: Build local PostgreSQL connection
         else:
             pg_user = values.get('POSTGRES_USER', 'postgres')
             pg_pass = values.get('POSTGRES_PASSWORD', '')
             pg_server = values.get('POSTGRES_SERVER', 'localhost')
             pg_db = values.get('POSTGRES_DB', 'terrasim')
             values['DATABASE_URI'] = f"postgresql://{pg_user}:{pg_pass}@{pg_server}/{pg_db}"
+            values['DATABASE_TYPE'] = 'postgresql'
         return values
 
     # Storage settings

@@ -3,6 +3,10 @@
 **Professional-grade soil erosion analysis system using USPED model**  
 **🚀 GPU-Accelerated OpenGL Rendering | 5-60x Performance Improvement | Python-Only Architecture**
 
+> **✨ NEW: Professional World Machine 3D Viewer UI (v2.0)**  
+> Complete redesign with advanced visualization features, animation support, and professional export options.  
+> See [README_IMPLEMENTATION.md](README_IMPLEMENTATION.md) for details.
+
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.103%2B-brightgreen)](https://fastapi.tiangolo.com/)
 [![OpenGL](https://img.shields.io/badge/Rendering-OpenGL%2FGPU-yellow)](https://www.opengl.org/)
@@ -14,6 +18,7 @@
 
 - [Overview](#overview)
 - [Key Features](#key-features)
+- [📊 World Machine 3D Viewer](#-world-machine-3d-viewer-new)
 - [OpenGL Rendering System](#opengl-rendering-system)
 - [Quick Start](#quick-start)
 - [Installation](#installation)
@@ -135,7 +140,7 @@ If GPU libraries unavailable, system automatically falls back to CPU-based rende
 ### Verify Installation
 ```bash
 # Test OpenGL system (7 tests)
-python test_opengl_system.py
+python tests/test_opengl_system.py
 
 # Run examples
 python OPENGL_QUICKSTART.py
@@ -379,7 +384,6 @@ curl -X POST "http://localhost:8000/api/v1/pipeline/execute" \
 TerraSim/
 ├── app.py                          # Main entry point
 ├── requirements.txt                # Python dependencies
-├── test_opengl_system.py          # Integration tests (7/7 passing)
 ├── setup_database.py              # Database initialization
 ├── pyrightconfig.json             # Type checking config
 │
@@ -696,7 +700,7 @@ python -c "import OpenGL; print(OpenGL.__version__)"
 pip install PyOpenGL PyOpenGL_accelerate pygame
 
 # Verify tests pass:
-python test_opengl_system.py
+python tests/test_opengl_system.py
 ```
 
 ### Data Issues
@@ -827,7 +831,7 @@ class MyScreen(tk.Frame):
 pytest
 
 # Specific test file
-pytest test_opengl_system.py
+pytest tests/test_opengl_system.py
 
 # With coverage
 pytest --cov=backend
