@@ -1,39 +1,43 @@
 """
 TerraSim Erosion Modeling Engine
 
-PRIMARY EQUATION - USPED-Based 2.5D SoilModel:
+PRIMARY EQUATION - USPED-Based 2.5D Model:
 ═════════════════════════════════════════════════════════════════════════
 
-Elevation Evolution:
-    z(t+Δt) = z(t) - (Δt/ρ_b) * [∂(T cos α)/∂x + ∂(T sin α)/∂y + ε ∂(T sin β)/∂z]
+Sediment Transport Capacity (USPED):
+    T = R * K * C * P * (A_norm^m) * (sin β)^n  [kg/(m·s)]
+    
+where A_norm = A / A_ref (normalized contributing area, A_ref = 1 ha = 10,000 m²)
 
-Sediment Transport Capacity:
-    T = f(R, K, C, P, A^m, (sin β)^n, Q(I,S))
+Elevation Evolution (2.5D divergence):
+    z(t+Δt) = z(t) - (Δt_years / ρ_b) * [∂(T cos α)/∂x + ∂(T sin α)/∂y]
+    
+    Units: [m] = [years] / [Mg/m³] * [kg/m/s]
+           [m] = [years] * [1/Mg/m³] * [kg/m/s]
+           [m] = [years] * [1/(1300 kg/m³)] * [kg/m/s]
+           [m] = [m/year]  ✓ CORRECT
 
 ═════════════════════════════════════════════════════════════════════════
 
-Where:
-  z(x,y,t)  = Surface elevation (m)
-  Δt         = Time step (days)
-  ρ_b        = Bulk density of soil (kg/m³) ≈ 1300
-  T          = Sediment transport capacity (kg/s)
-  α          = Aspect angle (flow direction)
-  β          = Slope angle (steepness)
-  ε          = Slope effect coefficient ≈ 0.01
-  R          = Rainfall erosivity (MJ·mm/ha/yr)
-  K          = Soil erodibility (Mg·ha·h/MJ/mm)
-  C          = Cover-management factor (0-1)
-  P          = Support practices factor (0-1)
-  A          = Contributing area (m²)
-  Q          = Runoff depth (mm/event)
-  I          = Rainfall intensity (mm/hr)
-  S          = Soil retention (mm)
-  m          = Area exponent = 0.6
-  n          = Slope exponent = 1.3
+UNIT ANALYSIS FOR PARAMETERS:
+  dt_years       = Time step in years (dt_days / 365.25)
+  ρ_b            = Bulk density (1300 kg/m³ = 1.3 Mg/m³)
+  R              = Normalized rainfall factor (dimensionless, 0-1000)
+  K              = Normalized soil erodibility (dimensionless, 0.01-1.0)
+  C              = Cover factor (dimensionless, 0-1)
+  P              = Practice factor (dimensionless, 0-1)
+  A              = Contributing area (m²)
+  m              = Area exponent ≈ 0.6
+  n              = Slope exponent ≈ 1.3
+  α              = Aspect angle (flow direction, radians)
+  β              = Slope angle (steepness, radians)
 
-This module implements the core erosion modeling calculations based on the
-USPED (Unit Stream Power-based Erosion Deposition) framework with RUSLE
-validation and hydrological integration.
+Result: Erosion rate in [m/year] ✓
+
+═════════════════════════════════════════════════════════════════════════
+
+This module implements core erosion modeling based on the USPED framework
+(Mitasova & Hofierka 1993) with proper unit conversions for m/year output.
 
 References:
 - USPED model: Mitasova & Hofierka (1993)

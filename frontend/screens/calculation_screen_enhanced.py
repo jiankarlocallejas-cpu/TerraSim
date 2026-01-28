@@ -1,5 +1,5 @@
 """
-Enhanced Calculation Screen - Parameters, simulation progress, and 3D visualization
+Enhanced Calculation Screen - Parameters, simulation progress, and 3D visualization with scenario support
 """
 
 import tkinter as tk
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class ParametersPanel(tk.Frame):
-    """Panel for editing simulation parameters"""
+    """Panel for editing simulation parameters with scenario and time scale selection"""
     
     # Default parameter ranges
     PARAM_RANGES = {
@@ -35,13 +35,28 @@ class ParametersPanel(tk.Frame):
         'runoff_coefficient': (0.0, 1.0, 0.5),
     }
     
+    # Pre-defined scenarios
+    SCENARIOS = {
+        'Baseline': {'rainfall_erosivity': 300, 'soil_erodibility': 0.35, 'cover_factor': 0.3, 'practice_factor': 0.5},
+        'High Rainfall': {'rainfall_erosivity': 600, 'soil_erodibility': 0.35, 'cover_factor': 0.3, 'practice_factor': 0.5},
+        'Low Vegetation': {'rainfall_erosivity': 300, 'soil_erodibility': 0.35, 'cover_factor': 0.7, 'practice_factor': 0.5},
+        'Extreme': {'rainfall_erosivity': 800, 'soil_erodibility': 0.7, 'cover_factor': 0.8, 'practice_factor': 0.8},
+        'Protected': {'rainfall_erosivity': 300, 'soil_erodibility': 0.35, 'cover_factor': 0.1, 'practice_factor': 0.2},
+        'Post-Fire': {'rainfall_erosivity': 400, 'soil_erodibility': 0.65, 'cover_factor': 0.95, 'practice_factor': 0.7},
+    }
+    
+    # Time scales
+    TIME_SCALES = ['Day', 'Month', 'Year']
+    
     def __init__(self, parent):
         super().__init__(parent, bg='#f5f5f5')
         self.parameters: Dict[str, float] = {}
+        self.current_scenario = tk.StringVar(value='Baseline')
+        self.current_time_scale = tk.StringVar(value='Year')
         self._create_widgets()
     
     def _create_widgets(self):
-        """Create parameter sliders"""
+        """Create parameter sliders and controls"""
         # Header
         header = tk.Label(
             self,
@@ -64,6 +79,52 @@ class ParametersPanel(tk.Frame):
         
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # ===== SCENARIO SELECTION =====
+        scenario_frame = tk.Frame(scrollable_frame, bg='#f5f5f5')
+        scenario_frame.pack(fill=tk.X, padx=10, pady=8)
+        
+        scenario_label = tk.Label(
+            scenario_frame,
+            text="Scenario:",
+            font=("Arial", 10, "bold"),
+            bg='#f5f5f5'
+        )
+        scenario_label.pack(side=tk.LEFT, padx=5)
+        
+        scenario_combo = ttk.Combobox(
+            scenario_frame,
+            textvariable=self.current_scenario,
+            values=list(self.SCENARIOS.keys()),
+            state='readonly',
+            width=15
+        )
+        scenario_combo.pack(side=tk.LEFT, padx=5)
+        scenario_combo.bind('<<ComboboxSelected>>', self._on_scenario_change)
+        
+        # ===== TIME SCALE SELECTION =====
+        time_scale_frame = tk.Frame(scrollable_frame, bg='#f5f5f5')
+        time_scale_frame.pack(fill=tk.X, padx=10, pady=8)
+        
+        time_label = tk.Label(
+            time_scale_frame,
+            text="Output Units:",
+            font=("Arial", 10, "bold"),
+            bg='#f5f5f5'
+        )
+        time_label.pack(side=tk.LEFT, padx=5)
+        
+        time_combo = ttk.Combobox(
+            time_scale_frame,
+            textvariable=self.current_time_scale,
+            values=self.TIME_SCALES,
+            state='readonly',
+            width=15
+        )
+        time_combo.pack(side=tk.LEFT, padx=5)
+        
+        # Separator
+        ttk.Separator(scrollable_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10, pady=5)
         
         # Create sliders
         self.sliders: Dict[str, tk.Scale] = {}
@@ -152,6 +213,17 @@ class ParametersPanel(tk.Frame):
         
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    def _on_scenario_change(self, event=None):
+        """Update parameters when scenario changes"""
+        scenario_name = self.current_scenario.get()
+        if scenario_name in self.SCENARIOS:
+            scenario_params = self.SCENARIOS[scenario_name]
+            for param_name, value in scenario_params.items():
+                if param_name in self.sliders:
+                    self.sliders[param_name].set(value)
+                    self.parameters[param_name] = value
+            logger.info(f"Loaded scenario: {scenario_name}")
     
     @staticmethod
     def _format_param_name(name: str) -> str:
@@ -242,6 +314,14 @@ class ParametersPanel(tk.Frame):
     def get_parameters(self) -> Dict[str, float]:
         """Get current parameters"""
         return self.parameters.copy()
+    
+    def get_scenario(self) -> str:
+        """Get current scenario name"""
+        return self.current_scenario.get()
+    
+    def get_time_scale(self) -> str:
+        """Get current time scale (Day/Month/Year)"""
+        return self.current_time_scale.get()
 
 
 class Visualization3D(tk.Frame):
@@ -343,7 +423,7 @@ class Visualization3D(tk.Frame):
 
 
 class EnhancedCalculationScreen(tk.Frame):
-    """Enhanced calculation screen with parameters and 3D visualization"""
+    """Enhanced calculation screen with parameters, scenarios, time scales, and 3D visualization"""
     
     def __init__(self, parent, on_complete: Optional[Callable] = None):
         super().__init__(parent, bg='#f0f0f0')
@@ -362,8 +442,8 @@ class EnhancedCalculationScreen(tk.Frame):
         
         title_label = tk.Label(
             header_frame,
-            text="SIMULATION CONTROL & VISUALIZATION",
-            font=("Arial", 18, "bold"),
+            text="SIMULATION CONTROL & VISUALIZATION (USPED with Time Scales & Scenarios)",
+            font=("Arial", 16, "bold"),
             bg='#2c3e50',
             fg='white'
         )
@@ -559,7 +639,13 @@ class EnhancedCalculationScreen(tk.Frame):
         self.cancel_button.config(state=tk.NORMAL)
         self.status_text.delete(1.0, tk.END)
         self.progress_bar['value'] = 0
-        self.add_status_message("Simulation started with current parameters", "INFO")
+        
+        scenario = self.params_panel.get_scenario()
+        time_scale = self.params_panel.get_time_scale()
+        
+        self.add_status_message(f"Simulation started with scenario: {scenario}", "INFO")
+        self.add_status_message(f"Output time scale: {time_scale}", "INFO")
+        self.add_status_message("Current parameters applied", "INFO")
     
     def cancel_simulation(self):
         """Cancel the simulation"""

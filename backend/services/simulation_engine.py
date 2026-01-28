@@ -4,7 +4,7 @@ Orchestrates multi-stage erosion modeling simulations with parameter control
 
 This module provides comprehensive simulation capabilities including:
 - Scenario-based parameter variation
-- Time-stepping simulation loops
+- Time-stepping simulation loops with multiple time scales (day/month/year)
 - Uncertainty quantification
 - Result aggregation and reporting
 """
@@ -18,6 +18,22 @@ import time
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+class TimeScale(Enum):
+    """Time scales for simulation output"""
+    DAY = ("day", 1.0)  # Days
+    MONTH = ("month", 30.0)  # Days per month (approximate)
+    YEAR = ("year", 365.25)  # Days per year
+    
+    def __init__(self, name: str, days: float):
+        self._name = name
+        self.days = days  # Conversion factor to days
+    
+    @property
+    def display_name(self) -> str:
+        return self._name
+
 
 class SimulationMode(Enum):
     """Available simulation modes"""
@@ -59,6 +75,9 @@ class SimulationParameters:
     # Runoff coefficient
     runoff_coefficient: float = 0.5
     
+    # Time scale for output reporting
+    time_scale: TimeScale = field(default=TimeScale.YEAR)
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
@@ -72,7 +91,112 @@ class SimulationParameters:
             'area_exponent': self.area_exponent,
             'slope_exponent': self.slope_exponent,
             'runoff_coefficient': self.runoff_coefficient,
+            'time_scale': self.time_scale.display_name,
         }
+
+
+@dataclass
+class ErosionScenario:
+    """Pre-defined erosion scenarios with parameter sets"""
+    name: str
+    description: str
+    parameters: SimulationParameters
+    
+    @staticmethod
+    def baseline() -> 'ErosionScenario':
+        """Baseline scenario - average conditions"""
+        return ErosionScenario(
+            name="Baseline",
+            description="Average erosion conditions with typical parameters",
+            parameters=SimulationParameters(
+                rainfall_erosivity=300.0,
+                soil_erodibility=0.35,
+                cover_factor=0.3,
+                practice_factor=0.5,
+            )
+        )
+    
+    @staticmethod
+    def high_rainfall() -> 'ErosionScenario':
+        """High rainfall scenario"""
+        return ErosionScenario(
+            name="High Rainfall",
+            description="Intense rainfall events causing increased erosion",
+            parameters=SimulationParameters(
+                rainfall_erosivity=600.0,  # Double baseline
+                soil_erodibility=0.35,
+                cover_factor=0.3,
+                practice_factor=0.5,
+            )
+        )
+    
+    @staticmethod
+    def low_vegetation() -> 'ErosionScenario':
+        """Low vegetation coverage scenario"""
+        return ErosionScenario(
+            name="Low Vegetation",
+            description="Sparse vegetation cover increases erosion risk",
+            parameters=SimulationParameters(
+                rainfall_erosivity=300.0,
+                soil_erodibility=0.35,
+                cover_factor=0.7,  # Less protection (higher value)
+                practice_factor=0.5,
+            )
+        )
+    
+    @staticmethod
+    def extreme_conditions() -> 'ErosionScenario':
+        """Extreme erosion scenario"""
+        return ErosionScenario(
+            name="Extreme Conditions",
+            description="Worst-case scenario: high rainfall, low vegetation, poor practices",
+            parameters=SimulationParameters(
+                rainfall_erosivity=800.0,
+                soil_erodibility=0.7,
+                cover_factor=0.8,
+                practice_factor=0.8,
+            )
+        )
+    
+    @staticmethod
+    def protected_area() -> 'ErosionScenario':
+        """Protected area scenario"""
+        return ErosionScenario(
+            name="Protected Area",
+            description="Good conservation practices and vegetation protection",
+            parameters=SimulationParameters(
+                rainfall_erosivity=300.0,
+                soil_erodibility=0.35,
+                cover_factor=0.1,  # Good protection
+                practice_factor=0.2,  # Good practices
+            )
+        )
+    
+    @staticmethod
+    def post_fire() -> 'ErosionScenario':
+        """Post-fire scenario"""
+        return ErosionScenario(
+            name="Post-Fire",
+            description="High erosion risk after fire removes vegetation",
+            parameters=SimulationParameters(
+                rainfall_erosivity=400.0,
+                soil_erodibility=0.65,  # Soil structure damaged by fire
+                cover_factor=0.95,  # Almost no vegetation
+                practice_factor=0.7,
+            )
+        )
+    
+    @staticmethod
+    def all_scenarios() -> List['ErosionScenario']:
+        """Get all available scenarios"""
+        return [
+            ErosionScenario.baseline(),
+            ErosionScenario.high_rainfall(),
+            ErosionScenario.low_vegetation(),
+            ErosionScenario.extreme_conditions(),
+            ErosionScenario.protected_area(),
+            ErosionScenario.post_fire(),
+        ]
 
 
 @dataclass
@@ -358,6 +482,59 @@ class SimulationEngine:
         
         return sensitivity_results
     
+    def run_scenario_comparison(
+        self,
+        dem: np.ndarray,
+        scenarios: Optional[List[ErosionScenario]] = None,
+        time_scale: TimeScale = TimeScale.YEAR,
+        show_progress: bool = True
+    ) -> Dict[str, SimulationResult]:
+        """
+        Run simulations for multiple pre-defined scenarios
+        
+        Args:
+            dem: Digital Elevation Model
+            scenarios: List of scenarios to compare (uses all if None)
+            time_scale: Time scale for output reporting
+            show_progress: Whether to print progress
+        
+        Returns:
+            Dictionary of scenario results
+        """
+        if scenarios is None:
+            scenarios = ErosionScenario.all_scenarios()
+        
+        logger.info(f"Starting scenario comparison with {len(scenarios)} scenarios")
+        start_time = time.time()
+        
+        scenario_results = {}
+        
+        for idx, scenario in enumerate(scenarios):
+            if show_progress:
+                logger.info(f"[SCENARIO] {idx+1}/{len(scenarios)} - {scenario.name}")
+            
+            # Update time scale
+            params = scenario.parameters
+            params.time_scale = time_scale
+            
+            # Run simulation
+            result = self.run_single_simulation(dem, params, show_progress=False)
+            scenario_results[scenario.name] = result
+            
+            if show_progress:
+                logger.info(f"  Mean erosion: {result.mean_erosion:.4f} {time_scale.display_name}s/year")
+                logger.info(f"  Peak erosion: {result.peak_erosion:.4f} {time_scale.display_name}s/year")
+        
+        computation_time = time.time() - start_time
+        
+        if show_progress:
+            logger.info(f"[SCENARIO] Comparison complete in {computation_time:.2f}s")
+            logger.info("[SCENARIO] Summary:")
+            for scenario_name, result in scenario_results.items():
+                logger.info(f"  {scenario_name}: {result.mean_erosion:.4f} {time_scale.display_name}s/year")
+        
+        return scenario_results
+    
     def run_uncertainty_analysis(
         self,
         dem: np.ndarray,
@@ -456,15 +633,34 @@ class SimulationEngine:
         slopes: np.ndarray,
         params: SimulationParameters
     ) -> np.ndarray:
-        """Calculate sediment transport capacity (T)"""
+        """
+        Calculate sediment transport capacity (T) using USPED.
+        
+        USPED equation: T = R * K * C * P * (A_norm^m) * (sin β)^n
+        where A_norm = contributing area normalized by reference area (1 ha = 10,000 m²)
+        
+        Units analysis:
+        - R, K, C, P are normalized dimensionless factors (0-1000, 0-1, 0-1, 0-1)
+        - Flow term represents normalized contributing area
+        - Result T is proportional to eroding power
+        - Final erosion rate = T * scaling factor [m/year]
+        """
+        # Normalize contributing area by reference (1 ha = 10,000 m²)
+        A_ref = 10000.0  # Reference area in m²
+        flow_normalized = np.maximum(flow, 1.0) / A_ref
+        
+        # USPED transport capacity
+        sin_slope = np.sin(np.maximum(slopes, 0.001))
+        
         T = (
             params.rainfall_erosivity * 
             params.soil_erodibility * 
             params.cover_factor * 
             params.practice_factor *
-            (flow ** params.area_exponent) *
-            (np.sin(slopes) ** params.slope_exponent)
+            (flow_normalized ** params.area_exponent) *
+            (sin_slope ** params.slope_exponent)
         )
+        
         return np.maximum(T, 0)
     
     @staticmethod
@@ -473,8 +669,39 @@ class SimulationEngine:
         aspects: np.ndarray,
         params: SimulationParameters
     ) -> np.ndarray:
-        """Calculate erosion rate"""
-        erosion = transport_capacity * params.runoff_coefficient
+        """
+        Calculate erosion rate from transport capacity with time scale conversion.
+        
+        z_change = -(dt_years / rho_b) * div(T)
+        
+        For simplified model without full divergence:
+        erosion_rate [m/time_scale] = transport_capacity * scaling / rho_b * conversion
+        
+        where rho_b = 1300 kg/m³ (bulk density)
+        
+        Converts output to requested time scale (day/month/year)
+        """
+        # Bulk density in kg/m³
+        rho_b = 1300.0
+        
+        # Conversion factor: days to years
+        days_per_year = 365.25
+        
+        # Time conversion from days to years
+        # erosion [m/year] = T [proportional to kg/m] / rho_b [kg/m³] * dt [years]
+        dt_years = params.time_step_days / days_per_year
+        
+        # Calculate erosion rate in m/year
+        erosion_per_year = (transport_capacity * params.runoff_coefficient * dt_years) / (rho_b / 1000)
+        
+        # Convert to requested time scale
+        if params.time_scale == TimeScale.DAY:
+            erosion = erosion_per_year / days_per_year
+        elif params.time_scale == TimeScale.MONTH:
+            erosion = erosion_per_year / (days_per_year / 30.0)
+        else:  # TimeScale.YEAR
+            erosion = erosion_per_year
+        
         return np.maximum(erosion, 0)
     
     @staticmethod

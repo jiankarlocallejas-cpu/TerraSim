@@ -939,23 +939,33 @@ Max Peak:        {np.max(self.stats_history['peak_erosion']):.6f} m/yr
         slopes: np.ndarray,
         params: Any
     ) -> np.ndarray:
-        """Calculate sediment transport capacity"""
+        """
+        Calculate sediment transport capacity using USPED equation.
+        
+        T = R * K * C * P * (A_norm^m) * (sin β)^n
+        
+        Units: Result is dimensionless transport capacity factor
+        Final erosion rate [m/year] is calculated in _calculate_erosion()
+        """
         from backend.services.simulation_engine import SimulationParameters
         
         # Convert to dict if SimulationParameters
         if isinstance(params, SimulationParameters):
             params = params.__dict__
         
-        flow_safe = np.maximum(flow, 1.0)
+        # Normalize contributing area by 1 ha reference (10,000 m²)
+        A_ref = 10000.0
+        flow_normalized = np.maximum(flow, 1.0) / A_ref
         slope_safe = np.maximum(slopes, 0.001)
+        sin_slope = np.sin(slope_safe)
         
         T = (
             params['rainfall_erosivity'] * 
             params['soil_erodibility'] * 
             params['cover_factor'] * 
             params['practice_factor'] *
-            (flow_safe ** params['area_exponent']) *
-            (np.sin(slope_safe) ** params['slope_exponent'])
+            (flow_normalized ** params['area_exponent']) *
+            (sin_slope ** params['slope_exponent'])
         )
         
         return np.maximum(T, 0)
