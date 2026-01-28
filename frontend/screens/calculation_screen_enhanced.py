@@ -3,11 +3,13 @@ Enhanced Calculation Screen - Parameters, simulation progress, and 3D visualizat
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 import threading
 from datetime import datetime
 from typing import Callable, Optional, Dict, Any
 import logging
+import json
+from pathlib import Path
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
@@ -130,6 +132,24 @@ class ParametersPanel(tk.Frame):
             padx=10
         ).pack(side=tk.LEFT, padx=5)
         
+        tk.Button(
+            button_frame,
+            text="Save to File",
+            bg='#2ecc71',
+            fg='white',
+            command=self.save_parameters_dialog,
+            padx=10
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(
+            button_frame,
+            text="Load from File",
+            bg='#e67e22',
+            fg='white',
+            command=self.load_parameters_dialog,
+            padx=10
+        ).pack(side=tk.LEFT, padx=5)
+        
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
     
@@ -159,8 +179,65 @@ class ParametersPanel(tk.Frame):
         logger.info("Parameters reset to defaults")
     
     def export_parameters(self):
-        """Export current parameters"""
+        """Export current parameters to log"""
         logger.info(f"Current parameters: {self.parameters}")
+    
+    def save_parameters_dialog(self):
+        """Open dialog to save parameters to file"""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile="simulation_parameters.json"
+        )
+        if file_path:
+            self.save_parameters_to_file(file_path)
+    
+    def save_parameters_to_file(self, file_path: str):
+        """Save parameters to JSON file"""
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(self.parameters, f, indent=2)
+            messagebox.showinfo("Success", f"Parameters saved to:\n{file_path}")
+            logger.info(f"Parameters saved to {file_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save parameters:\n{str(e)}")
+            logger.error(f"Failed to save parameters: {e}")
+    
+    def load_parameters_dialog(self):
+        """Open dialog to load parameters from file"""
+        file_path = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if file_path:
+            self.load_parameters_from_file(file_path)
+    
+    def load_parameters_from_file(self, file_path: str):
+        """Load parameters from JSON file and update sliders"""
+        try:
+            with open(file_path, 'r') as f:
+                loaded_params = json.load(f)
+            
+            # Validate and update parameters
+            for param_name, value in loaded_params.items():
+                if param_name in self.sliders:
+                    # Validate value is within range
+                    min_val, max_val, _ = self.PARAM_RANGES[param_name]
+                    if min_val <= value <= max_val:
+                        self.sliders[param_name].set(value)
+                        self.parameters[param_name] = value
+                    else:
+                        logger.warning(f"Parameter {param_name}={value} out of range [{min_val}, {max_val}], skipping")
+                else:
+                    logger.warning(f"Unknown parameter {param_name}, skipping")
+            
+            messagebox.showinfo("Success", f"Parameters loaded from:\n{file_path}")
+            logger.info(f"Parameters loaded from {file_path}")
+        except json.JSONDecodeError as e:
+            messagebox.showerror("Error", f"Invalid JSON file:\n{str(e)}")
+            logger.error(f"JSON decode error: {e}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load parameters:\n{str(e)}")
+            logger.error(f"Failed to load parameters: {e}")
     
     def get_parameters(self) -> Dict[str, float]:
         """Get current parameters"""

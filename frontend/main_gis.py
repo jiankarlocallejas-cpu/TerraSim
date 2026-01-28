@@ -595,8 +595,30 @@ class TerraSim_GIS(tk.Tk):
             self.gis_canvas.render()
     
     def show_parameters_dialog(self):
-        """Show simulation parameters dialog"""
-        messagebox.showinfo("Info", "Parameters dialog coming soon")
+        """Show simulation parameters dialog with 3D visualization"""
+        # Create a new window for the calculation screen
+        calc_window = tk.Toplevel(self)
+        calc_window.title("Simulation Parameters & 3D Visualization")
+        calc_window.geometry("1400x900")
+        calc_window.resizable(True, True)
+        
+        # Import the calculation screen
+        from .screens import CalculationScreen
+        
+        # Create the calculation screen
+        calc_screen = CalculationScreen(calc_window, on_complete=self._on_simulation_complete)
+        calc_screen.pack(fill=tk.BOTH, expand=True)
+        
+        # Center the window
+        calc_window.transient(self)
+        calc_window.grab_set()
+        
+        # Handle window close
+        def on_close():
+            calc_window.destroy()
+            self.focus_set()
+        
+        calc_window.protocol("WM_DELETE_WINDOW", on_close)
     
     def show_reproject_dialog(self):
         """Show reprojection dialog"""
@@ -680,6 +702,13 @@ Version 2.0 - 2026"""
         self.stats_text.delete(1.0, tk.END)
         self.stats_text.insert(1.0, text)
         self.stats_text.config(state=tk.DISABLED)
+    
+    def _on_simulation_complete(self, results=None):
+        """Handle simulation completion from calculation screen"""
+        logger.info("Simulation completed from parameters dialog")
+        if results:
+            logger.info(f"Simulation results: {results}")
+        # Could update the main interface with results here
     
     def _on_opacity_change(self, value):
         """Handle opacity slider change"""
