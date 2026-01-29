@@ -73,7 +73,7 @@ class DeviceManagementScreen(ttk.Frame):
         
         self.trust_btn = ttk.Button(
             device_actions,
-            text="✓ Trust Device",
+            text="[OK] Trust Device",
             command=self.trust_selected_device,
             state=tk.DISABLED
         )

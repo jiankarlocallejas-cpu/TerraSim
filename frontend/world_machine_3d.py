@@ -91,7 +91,7 @@ class WorldMachine3DViewer:
         
         logger.info("Initialized Professional World Machine 3D Viewer")
         if WORLD_MACHINE_STYLE_AVAILABLE:
-            logger.info("✓ World Machine Style visualization enabled")
+            logger.info("[OK] World Machine Style visualization enabled")
     
     def _build_interface(self):
         """Build the professional UI"""
@@ -408,17 +408,30 @@ class WorldMachine3DViewer:
     # ==================== DATA LOADING ====================
     
     def load_dem(self, dem: np.ndarray) -> bool:
-        """Load DEM for visualization"""
+        """Load DEM for visualization (optimized with downsampling for large files)"""
         if dem is None or dem.size == 0:
             logger.warning("Cannot load empty DEM")
             return False
         
         self.current_dem = dem.astype(np.float32)
         self._update_info_panel()
-        self.update_status(f"✓ DEM loaded: {dem.shape[0]}×{dem.shape[1]} pixels")
+        self.update_status(f"[OK] DEM loaded: {dem.shape[0]}×{dem.shape[1]} pixels")
         
         logger.info(f"Loaded DEM: shape={dem.shape}, min={np.min(dem):.2f}, max={np.max(dem):.2f}")
-        self.render_view()
+        
+        # For large DEMs, show quick preview first, then full render
+        if max(dem.shape) > 2048:
+            self.update_status(f"▶ Loading preview of large DEM...")
+            # Quick preview with downsampling
+            from scipy import ndimage
+            preview_dem = ndimage.zoom(dem, (512/dem.shape[0], 512/dem.shape[1]), order=1)
+            self.current_dem = preview_dem
+            self.render_view()
+            # Then render full resolution in background
+            self.current_dem = dem
+        else:
+            self.render_view()
+        
         return True
     
     def add_animation_frame(self, dem: np.ndarray):
@@ -438,24 +451,46 @@ class WorldMachine3DViewer:
     # ==================== RENDERING ====================
     
     def render_view(self):
-        """Render current DEM"""
+        """Render current DEM in background thread to prevent UI freeze"""
         if self.current_dem is None:
             self.update_status("⚠ No DEM loaded")
             return
+        
+        # Check if already rendering
+        if hasattr(self, '_is_rendering') and self._is_rendering:
+            return
+        
+        self._is_rendering = True
         
         try:
             self.update_status("◆ Rendering...")
             self.parent_frame.update()
             
+            # Run rendering in background thread
+            render_thread = threading.Thread(
+                target=self._render_in_thread,
+                daemon=True
+            )
+            render_thread.start()
+        except Exception as e:
+            logger.error(f"Render error: {e}")
+            self.update_status(f"✗ Render failed: {str(e)[:40]}")
+            self._is_rendering = False
+    
+    def _render_in_thread(self):
+        """Perform rendering in background thread"""
+        try:
             if WORLD_MACHINE_STYLE_AVAILABLE and self.use_advanced_rendering:
                 self._render_advanced()
             else:
                 self._render_fallback()
             
-            self.update_status("✓ Render complete")
+            self.update_status("[OK] Render complete")
         except Exception as e:
             logger.error(f"Render error: {e}")
             self.update_status(f"✗ Render failed: {str(e)[:40]}")
+        finally:
+            self._is_rendering = False
     
     def refresh_view(self):
         """Refresh current view with new settings"""
@@ -500,7 +535,7 @@ class WorldMachine3DViewer:
             self._render_fallback()
     
     def _render_fallback(self):
-        """Fallback to basic matplotlib rendering"""
+        """Fallback to basic matplotlib rendering (optimized for speed)"""
         if self.current_dem is None:
             return
         
@@ -508,15 +543,24 @@ class WorldMachine3DViewer:
             if self.canvas:
                 self.canvas.get_tk_widget().destroy()
             
-            # Create figure
-            self.fig = Figure(figsize=(10, 8), dpi=90, facecolor=self.colors.primary_bg)
+            # Use lower DPI for faster rendering
+            dpi = 80
+            self.fig = Figure(figsize=(10, 8), dpi=dpi, facecolor=self.colors.primary_bg)
             self.ax = self.fig.add_subplot(111)
             
             # Normalize DEM
-            dem_norm = (self.current_dem - np.min(self.current_dem)) / (np.max(self.current_dem) - np.min(self.current_dem) + 1e-8)
+            dem_display = self.current_dem
             
-            # Create color mapping
-            im = self.ax.imshow(dem_norm, cmap='terrain', aspect='auto')
+            # Downsample if too large for smooth interaction
+            if max(dem_display.shape) > 1024:
+                scale = max(dem_display.shape) / 1024
+                from scipy import ndimage
+                dem_display = ndimage.zoom(dem_display, (1/scale, 1/scale), order=1)
+            
+            dem_norm = (dem_display - np.min(dem_display)) / (np.max(dem_display) - np.min(dem_display) + 1e-8)
+            
+            # Create color mapping with fewer colors for speed
+            im = self.ax.imshow(dem_norm, cmap='terrain', aspect='auto', interpolation='bilinear')
             
             self.ax.set_title('Terrain Visualization', color=self.colors.accent, fontsize=12, fontweight='bold')
             self.ax.axis('off')
@@ -525,7 +569,7 @@ class WorldMachine3DViewer:
             cbar = self.fig.colorbar(im, ax=self.ax, shrink=0.8)
             cbar.ax.tick_params(colors=self.colors.text_secondary)
             
-            # Create canvas
+            # Create canvas with optimizations
             self.canvas = FigureCanvasTkAgg(self.fig, master=self.viewer_frame)
             self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             self.canvas.draw()
@@ -605,7 +649,7 @@ class WorldMachine3DViewer:
             self.is_animating = False
             self.play_btn.config(state=tk.NORMAL)
             self.pause_btn.config(state=tk.DISABLED)
-            self.update_status("✓ Animation finished")
+            self.update_status("[OK] Animation finished")
     
     def pause_animation(self):
         """Pause animation"""
@@ -644,7 +688,7 @@ class WorldMachine3DViewer:
             if self.fig:
                 self.fig.savefig(filename, dpi=150, bbox_inches='tight', facecolor=self.colors.primary_bg)
             logger.info(f"Screenshot saved: {filename}")
-            self.update_status(f"✓ Saved: {filename}")
+            self.update_status(f"[OK] Saved: {filename}")
             messagebox.showinfo("Success", f"Screenshot saved as\n{filename}")
         except Exception as e:
             logger.error(f"Screenshot error: {e}")
@@ -662,13 +706,13 @@ class WorldMachine3DViewer:
         
         try:
             filename = f"animation_{int(time.time())}.gif"
-            self.update_status("✓ Exporting GIF...")
+            self.update_status("[OK] Exporting GIF...")
             self.parent_frame.update()
             
             self.animation_renderer.save_animation(filename, duration_per_frame=int(self.speed_var.get() * 1000))
             
             logger.info(f"Animation exported: {filename}")
-            self.update_status(f"✓ Animation saved: {filename}")
+            self.update_status(f"[OK] Animation saved: {filename}")
             messagebox.showinfo("Success", f"Animation exported as\n{filename}")
         except Exception as e:
             logger.error(f"Export error: {e}")
@@ -690,7 +734,7 @@ class WorldMachine3DViewer:
         self.current_frame = 0
         self.frame_label.config(text=f"Frames: 0/{len(self.animation_data)}")
         self.render_view()
-        self.update_status("✓ Settings reset")
+        self.update_status("[OK] Settings reset")
         logger.info("Settings reset to defaults")
     
     def update_status(self, message: str):

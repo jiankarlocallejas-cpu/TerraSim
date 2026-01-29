@@ -157,7 +157,7 @@ class GISCanvas:
         # Sort layers by type (raster first, then vector)
         sorted_layers = sorted(
             [(k, v) for k, v in self.layers.items() if v['visible']],
-            key=lambda x: (x[1]['type'] != 'raster', k)
+            key=lambda x: (x[1]['type'] != 'raster', x[0])
         )
         
         for layer_name, layer_data in sorted_layers:

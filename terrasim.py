@@ -15,14 +15,27 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "backend"))
 
+# Configure UTF-8 encoding for Windows console
+if sys.platform == 'win32':
+    # Enable UTF-8 output for Windows console
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8')
+
 # Setup logging
+file_handler = logging.FileHandler(project_root / 'terrasim.log', encoding='utf-8')
+stream_handler = logging.StreamHandler(sys.stdout)
+
+# Configure stream handler with UTF-8 encoding for Windows console
+if sys.platform == 'win32' and hasattr(stream_handler, 'setEncoding'):
+    stream_handler.setEncoding('utf-8')
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(project_root / 'terrasim.log'),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, stream_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -42,18 +55,18 @@ class TerraSim:
             # Initialize database
             from backend.db.session import init_db
             init_db()
-            logger.info("✓ Database initialized")
+            logger.info("[OK] Database initialized")
             
             # Initialize email service
             from backend.services.email_service import EmailConfig
             config = EmailConfig()
             if config.sender_email:
-                logger.info("✓ Email service configured")
+                logger.info("[OK] Email service configured")
             else:
                 logger.warning("⚠ Email service not configured (optional)")
             
             # Initialize device manager
-            logger.info("✓ Device tracking ready")
+            logger.info("[OK] Device tracking ready")
             
             return True
         

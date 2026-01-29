@@ -486,7 +486,7 @@ class TerraSim_GIS(tk.Tk):
                 # Render initial frame
                 self.world_machine_viewer.render_view()
                 
-                self._set_status(f"✓ Simulation complete ({len(results)} frames)")
+                self._set_status(f"[OK] Simulation complete ({len(results)} frames)")
                 messagebox.showinfo("Success", f"Simulation completed!\n{len(results)} frames captured")
             
         except Exception as e:
