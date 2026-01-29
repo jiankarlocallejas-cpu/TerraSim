@@ -494,12 +494,292 @@ class TerraSim_GIS(tk.Tk):
             logger.error(f"Error running simulation: {e}")
     
     def run_time_series(self):
-        """Run time series simulation"""
-        messagebox.showinfo("Info", "Time series simulation coming soon")
+        """Run time series simulation with multiple timesteps"""
+        if self.current_dem is None:
+            messagebox.showwarning("Warning", "No DEM loaded")
+            return
+        
+        # Create dialog for time series parameters
+        dialog = tk.Toplevel(self)
+        dialog.title("Time Series Simulation")
+        dialog.geometry("400x500")
+        dialog.resizable(False, False)
+        
+        # Title
+        title_label = tk.Label(
+            dialog, 
+            text="Time Series Simulation Parameters",
+            font=("Arial", 12, "bold"),
+            fg=self.accent_color,
+            bg=self.primary_bg
+        )
+        title_label.pack(pady=10)
+        
+        # Parameters frame
+        params_frame = tk.Frame(dialog, bg=self.secondary_bg, relief=tk.SUNKEN, bd=1)
+        params_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Number of timesteps
+        tk.Label(params_frame, text="Number of Timesteps:", bg=self.secondary_bg, fg=self.text_color).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        num_steps_var = tk.IntVar(value=10)
+        tk.Scale(params_frame, from_=1, to=100, orient=tk.HORIZONTAL, variable=num_steps_var, bg=self.secondary_bg, fg=self.accent_color).pack(fill=tk.X, padx=10, pady=5)
+        
+        # Time step (days)
+        tk.Label(params_frame, text="Time Step (days):", bg=self.secondary_bg, fg=self.text_color).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        timestep_var = tk.DoubleVar(value=1.0)
+        tk.Scale(params_frame, from_=0.1, to=30.0, resolution=0.1, orient=tk.HORIZONTAL, variable=timestep_var, bg=self.secondary_bg, fg=self.accent_color).pack(fill=tk.X, padx=10, pady=5)
+        
+        # Rainfall erosivity
+        tk.Label(params_frame, text="Rainfall Erosivity (R factor):", bg=self.secondary_bg, fg=self.text_color).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        rainfall_var = tk.DoubleVar(value=300.0)
+        tk.Scale(params_frame, from_=50.0, to=500.0, resolution=10.0, orient=tk.HORIZONTAL, variable=rainfall_var, bg=self.secondary_bg, fg=self.accent_color).pack(fill=tk.X, padx=10, pady=5)
+        
+        # Soil erodibility
+        tk.Label(params_frame, text="Soil Erodibility (K factor):", bg=self.secondary_bg, fg=self.text_color).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        soil_var = tk.DoubleVar(value=0.35)
+        tk.Scale(params_frame, from_=0.0, to=1.0, resolution=0.05, orient=tk.HORIZONTAL, variable=soil_var, bg=self.secondary_bg, fg=self.accent_color).pack(fill=tk.X, padx=10, pady=5)
+        
+        # Vegetation cover
+        tk.Label(params_frame, text="Vegetation Cover (C factor):", bg=self.secondary_bg, fg=self.text_color).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        cover_var = tk.DoubleVar(value=0.3)
+        tk.Scale(params_frame, from_=0.0, to=1.0, resolution=0.05, orient=tk.HORIZONTAL, variable=cover_var, bg=self.secondary_bg, fg=self.accent_color).pack(fill=tk.X, padx=10, pady=5)
+        
+        # Button frame
+        button_frame = tk.Frame(dialog, bg=self.primary_bg)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        def start_time_series():
+            dialog.destroy()
+            self._run_time_series_thread(
+                num_steps=num_steps_var.get(),
+                time_step_days=timestep_var.get(),
+                rainfall_erosivity=rainfall_var.get(),
+                soil_erodibility=soil_var.get(),
+                cover_factor=cover_var.get()
+            )
+        
+        tk.Button(
+            button_frame,
+            text="Run Simulation",
+            command=start_time_series,
+            bg=self.accent_color,
+            fg=self.primary_bg,
+            font=("Arial", 10, "bold"),
+            padx=20
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            bg=self.secondary_bg,
+            fg=self.text_color,
+            font=("Arial", 10),
+            padx=20
+        ).pack(side=tk.LEFT, padx=5)
+    
+    def _run_time_series_thread(self, num_steps, time_step_days, rainfall_erosivity, soil_erodibility, cover_factor):
+        """Run time series simulation in background thread"""
+        def run():
+            try:
+                self._set_status("⏳ Running time series simulation...")
+                self.world_machine_viewer.update_status("⏳ Initializing time series...")
+                
+                # Create parameters
+                parameters = SimulationParameters(
+                    rainfall_erosivity=rainfall_erosivity,
+                    soil_erodibility=soil_erodibility,
+                    cover_factor=cover_factor,
+                    practice_factor=0.5,
+                    time_step_days=time_step_days,
+                    num_timesteps=num_steps,
+                    bulk_density=1300.0,
+                    area_exponent=0.6,
+                    slope_exponent=1.3,
+                    runoff_coefficient=0.5
+                )
+                
+                # Run time series simulation
+                result = self.sim_engine.run_time_series_simulation(
+                    self.current_dem,
+                    parameters=parameters,
+                    show_progress=True
+                )
+                
+                # Display results
+                if result.elevation_evolution:
+                    self.world_machine_viewer.update_status(f"✓ Time series complete ({len(result.elevation_evolution)} frames)")
+                    
+                    # Add frames to animation
+                    for frame_dem in result.elevation_evolution:
+                        self.world_machine_viewer.add_animation_frame(frame_dem)
+                    
+                    # Show first frame
+                    if len(result.elevation_evolution) > 0:
+                        self.world_machine_viewer.current_dem = result.elevation_evolution[0]
+                        self.world_machine_viewer.render_view()
+                    
+                    self._set_status(f"[OK] Time series complete - {len(result.elevation_evolution)} frames generated")
+                    
+                    # Show statistics
+                    stats_msg = f"""Time Series Simulation Complete!
+                    
+Timesteps: {len(result.elevation_evolution)}
+Mean Erosion: {result.mean_erosion:.4f} m/year
+Peak Erosion: {result.peak_erosion:.4f} m/year
+Total Volume Loss: {result.total_volume_loss:.2e} m³
+Computation Time: {result.computation_time:.2f}s
+
+Frames are now loaded in the animation player."""
+                    messagebox.showinfo("Success", stats_msg)
+                else:
+                    messagebox.showerror("Error", "Time series simulation produced no results")
+                    
+            except Exception as e:
+                logger.error(f"Time series simulation error: {e}")
+                messagebox.showerror("Error", f"Time series simulation failed: {e}")
+                self.world_machine_viewer.update_status(f"✗ Error: {str(e)[:50]}")
+        
+        # Run in background thread
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
     
     def run_sensitivity(self):
-        """Run sensitivity analysis"""
-        messagebox.showinfo("Info", "Sensitivity analysis coming soon")
+        """Run sensitivity analysis to test parameter impacts"""
+        if self.current_dem is None:
+            messagebox.showwarning("Warning", "No DEM loaded")
+            return
+        
+        # Create dialog for sensitivity parameters
+        dialog = tk.Toplevel(self)
+        dialog.title("Sensitivity Analysis")
+        dialog.geometry("400x400")
+        dialog.resizable(False, False)
+        
+        # Title
+        title_label = tk.Label(
+            dialog, 
+            text="Sensitivity Analysis Parameters",
+            font=("Arial", 12, "bold"),
+            fg=self.accent_color,
+            bg=self.primary_bg
+        )
+        title_label.pack(pady=10)
+        
+        # Parameters frame
+        params_frame = tk.Frame(dialog, bg=self.secondary_bg, relief=tk.SUNKEN, bd=1)
+        params_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Variation factor (how much to vary each parameter)
+        tk.Label(params_frame, text="Variation Factor (±%):", bg=self.secondary_bg, fg=self.text_color).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        variation_var = tk.DoubleVar(value=0.2)  # 20% variation
+        tk.Scale(params_frame, from_=0.05, to=0.5, resolution=0.05, orient=tk.HORIZONTAL, variable=variation_var, bg=self.secondary_bg, fg=self.accent_color).pack(fill=tk.X, padx=10, pady=5)
+        
+        # Base rainfall erosivity
+        tk.Label(params_frame, text="Base Rainfall Erosivity:", bg=self.secondary_bg, fg=self.text_color).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        rainfall_var = tk.DoubleVar(value=300.0)
+        tk.Scale(params_frame, from_=50.0, to=500.0, resolution=10.0, orient=tk.HORIZONTAL, variable=rainfall_var, bg=self.secondary_bg, fg=self.accent_color).pack(fill=tk.X, padx=10, pady=5)
+        
+        # Base soil erodibility
+        tk.Label(params_frame, text="Base Soil Erodibility:", bg=self.secondary_bg, fg=self.text_color).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        soil_var = tk.DoubleVar(value=0.35)
+        tk.Scale(params_frame, from_=0.0, to=1.0, resolution=0.05, orient=tk.HORIZONTAL, variable=soil_var, bg=self.secondary_bg, fg=self.accent_color).pack(fill=tk.X, padx=10, pady=5)
+        
+        # Button frame
+        button_frame = tk.Frame(dialog, bg=self.primary_bg)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        def start_sensitivity():
+            dialog.destroy()
+            self._run_sensitivity_thread(
+                vary_factor=variation_var.get(),
+                rainfall_erosivity=rainfall_var.get(),
+                soil_erodibility=soil_var.get()
+            )
+        
+        tk.Button(
+            button_frame,
+            text="Run Analysis",
+            command=start_sensitivity,
+            bg=self.accent_color,
+            fg=self.primary_bg,
+            font=("Arial", 10, "bold"),
+            padx=20
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            bg=self.secondary_bg,
+            fg=self.text_color,
+            font=("Arial", 10),
+            padx=20
+        ).pack(side=tk.LEFT, padx=5)
+    
+    def _run_sensitivity_thread(self, vary_factor, rainfall_erosivity, soil_erodibility):
+        """Run sensitivity analysis in background thread"""
+        def run():
+            try:
+                self._set_status("⏳ Running sensitivity analysis...")
+                self.world_machine_viewer.update_status("⏳ Testing parameter sensitivity...")
+                
+                # Create base parameters
+                base_params = SimulationParameters(
+                    rainfall_erosivity=rainfall_erosivity,
+                    soil_erodibility=soil_erodibility,
+                    cover_factor=0.3,
+                    practice_factor=0.5,
+                    time_step_days=1.0,
+                    num_timesteps=1,
+                    bulk_density=1300.0,
+                    area_exponent=0.6,
+                    slope_exponent=1.3,
+                    runoff_coefficient=0.5
+                )
+                
+                # Run sensitivity analysis
+                sensitivity_results = self.sim_engine.run_sensitivity_analysis(
+                    self.current_dem,
+                    base_parameters=base_params,
+                    vary_factor=vary_factor,
+                    show_progress=True
+                )
+                
+                # Format results
+                self._set_status("[OK] Sensitivity analysis complete")
+                
+                # Create results display
+                results_text = "SENSITIVITY ANALYSIS RESULTS\n"
+                results_text += "=" * 50 + "\n\n"
+                results_text += f"Variation Factor: ±{vary_factor*100:.0f}%\n\n"
+                
+                results_text += "Parameter Sensitivity (normalized):\n"
+                results_text += "-" * 50 + "\n"
+                
+                if sensitivity_results:
+                    for param, values in sensitivity_results.items():
+                        if isinstance(values, dict):
+                            low = values.get('low_erosion', 0)
+                            high = values.get('high_erosion', 0)
+                            sensitivity = abs(high - low) if high > 0 else 0
+                            results_text += f"{param:.<30} {sensitivity:.4f}\n"
+                
+                results_text += "\nHigher values indicate greater sensitivity to that parameter."
+                
+                # Show results in message box
+                messagebox.showinfo("Sensitivity Analysis Results", results_text)
+                
+                logger.info(f"Sensitivity analysis complete: {len(sensitivity_results)} parameters tested")
+                
+            except Exception as e:
+                logger.error(f"Sensitivity analysis error: {e}")
+                messagebox.showerror("Error", f"Sensitivity analysis failed: {e}")
+                self.world_machine_viewer.update_status(f"✗ Error: {str(e)[:50]}")
+        
+        # Run in background thread
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
     
     # ==================== ANALYSIS OPERATIONS ====================
     
