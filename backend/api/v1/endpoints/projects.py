@@ -81,9 +81,8 @@ def read_project_details(
         raise HTTPException(status_code=400, detail="Not enough permissions")
     
     # Get related data
-    from services.pointcloud_service import get_pointclouds
-    from services.raster_service import get_rasters
-    from services.analysis_service import get_analyses
+    from services.geospatial import get_pointclouds, get_rasters
+    from services.geospatial.analysis import get_analyses
     
     pointclouds = get_pointclouds(db, owner_id=current_user.id)
     rasters = get_rasters(db, owner_id=current_user.id)

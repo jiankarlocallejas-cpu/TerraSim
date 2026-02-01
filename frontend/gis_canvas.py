@@ -194,7 +194,8 @@ class GISCanvas:
             alpha=alpha,
             extent=(float(self.extent[0]), float(self.extent[1]), float(self.extent[2]), float(self.extent[3]))
         )
-        plt.colorbar(im, ax=self.ax, label='Elevation (m)')
+        # Use self.figure instead of plt.colorbar to avoid figure mismatch warning
+        self.figure.colorbar(im, ax=self.ax, label='Elevation (m)')
     
     def _render_vector(self, layer_data):
         """Render vector layer"""

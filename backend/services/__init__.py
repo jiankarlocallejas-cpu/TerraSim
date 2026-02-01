@@ -21,7 +21,7 @@ from .project_service import (
     update_project,
     delete_project
 )
-from .pointcloud_service import (
+from .geospatial.pointcloud_service import (
     get_pointcloud,
     get_pointclouds,
     create_pointcloud,
@@ -30,7 +30,7 @@ from .pointcloud_service import (
     process_pointcloud_file,
     get_pointcloud_stats
 )
-from .raster_service import (
+from .geospatial.raster_service import (
     get_raster,
     get_rasters,
     create_raster,
@@ -40,7 +40,7 @@ from .raster_service import (
     get_raster_stats,
     create_cog
 )
-from .analysis_service import (
+from .geospatial.analysis import (
     get_analysis,
     get_analyses,
     create_analysis,

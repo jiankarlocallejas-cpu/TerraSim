@@ -1,5 +1,5 @@
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 
@@ -12,6 +12,7 @@ class Bounds(BaseModel):
 
 class RasterBase(BaseModel):
     name: Optional[str] = None
+    file_path: Optional[str] = None
     data_type: Optional[str] = None  # dem, dsm, dtm, etc.
     resolution: Optional[float] = None  # in meters
     srs: Optional[str] = None
@@ -25,6 +26,8 @@ class RasterCreate(RasterBase):
 
 class RasterUpdate(BaseModel):
     name: Optional[str] = None
+    file_path: Optional[str] = None
+    file_size: Optional[int] = None
     data_type: Optional[str] = None
     resolution: Optional[float] = None
     srs: Optional[str] = None
@@ -43,8 +46,7 @@ class Raster(RasterBase):
     project_id: Optional[int] = None
     owner_id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RasterProcess(BaseModel):

@@ -1,7 +1,7 @@
 """
 Pydantic schemas for ErosionResult
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
@@ -68,8 +68,7 @@ class ErosionResultInDB(ErosionResultBase):
     uncertainty_metrics: Optional[Dict[str, Any]] = None
     sensitivity_analysis: Optional[Dict[str, float]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ErosionResultResponse(ErosionResultInDB):

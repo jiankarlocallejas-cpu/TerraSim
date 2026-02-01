@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TerraSim - Professional Terrain Simulation Platform</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        header h1 {
+            color: #2a5298;
+            margin-bottom: 5px;
+        }
+
+        header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .card h2 {
+            color: #2a5298;
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 500;
+            font-size: 13px;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.3s;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #2a5298;
+            box-shadow: 0 0 0 3px rgba(42, 82, 152, 0.1);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-calculate {
+            background: linear-gradient(135deg, #2a5298 0%, #1e3c72 100%);
+            color: white;
+        }
+
+        .btn-calculate:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(42, 82, 152, 0.3);
+        }
+
+        .btn-calculate:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-clear {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-clear:hover {
+            background: #e0e0e0;
+        }
+
+        .result {
+            background: #f0f7ff;
+            border-left: 4px solid #2a5298;
+            padding: 15px;
+            margin-top: 15px;
+            border-radius: 4px;
+        }
+
+        .result-item {
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .result-item:last-child {
+            margin-bottom: 0;
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .result-label {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .result-value {
+            color: #2a5298;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        .result-unit {
+            font-size: 12px;
+            color: #666;
+            margin-left: 5px;
+        }
+
+        .risk-category {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .risk-low {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .risk-moderate {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .risk-high {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #2a5298;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #2a5298;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .status {
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+
+        .status.connected {
+            color: #28a745;
+        }
+
+        .status.disconnected {
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌍 TerraSim</h1>
+            <p>Professional Terrain Simulation Platform - Advanced Erosion Modeling</p>
+        </header>
+
+        <div class="main-grid">
+            <!-- Input Form -->
+            <div class="card">
+                <h2>Erosion Analysis Parameters</h2>
+                
+                <div class="error" id="error"></div>
+
+                <div class="form-group">
+                    <label for="rainfall">Annual Rainfall (mm)</label>
+                    <input type="number" id="rainfall" min="0" step="10" value="800" placeholder="e.g., 800">
+                </div>
+
+                <div class="form-group">
+                    <label for="slope">Slope Angle (degrees)</label>
+                    <input type="number" id="slope" min="0" max="90" step="0.5" value="15" placeholder="e.g., 15">
+                </div>
+
+                <div class="form-group">
+                    <label for="slope_length">Slope Length (meters)</label>
+                    <input type="number" id="slope_length" min="0" step="5" value="30" placeholder="e.g., 30">
+                </div>
+
+                <div class="form-group">
+                    <label for="soil_type">Soil Type</label>
+                    <select id="soil_type">
+                        <option value="loam">Loam</option>
+                        <option value="clay">Clay</option>
+                        <option value="sandy">Sandy</option>
+                        <option value="silt">Silt</option>
+                        <option value="rocky">Rocky</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="vegetation_cover">Vegetation Cover (%)</label>
+                    <input type="number" id="vegetation_cover" min="0" max="100" step="5" value="60" placeholder="e.g., 60">
+                </div>
+
+                <div class="form-group">
+                    <label for="land_use">Land Use Type</label>
+                    <select id="land_use">
+                        <option value="forest">Forest</option>
+                        <option value="grassland">Grassland</option>
+                        <option value="agriculture">Agriculture</option>
+                        <option value="urban">Urban</option>
+                        <option value="bare">Bare Land</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="support_practices">Support Practices (%)</label>
+                    <input type="number" id="support_practices" min="0" max="100" step="5" value="25" placeholder="e.g., 25">
+                </div>
+
+                <div class="form-group">
+                    <label for="area">Analysis Area (hectares)</label>
+                    <input type="number" id="area" min="0" step="0.1" value="10" placeholder="e.g., 10">
+                </div>
+
+                <div class="form-group">
+                    <label for="seasonality">Seasonality</label>
+                    <select id="seasonality">
+                        <option value="uniform">Uniform</option>
+                        <option value="monsoon">Monsoon</option>
+                        <option value="winter">Winter Storms</option>
+                    </select>
+                </div>
+
+                <div class="button-group">
+                    <button class="btn-calculate" id="calculateBtn">Calculate Erosion</button>
+                    <button class="btn-clear" id="clearBtn">Clear</button>
+                </div>
+
+                <div class="status" id="status">
+                    <span id="statusText">Connecting to server...</span>
+                </div>
+            </div>
+
+            <!-- Results -->
+            <div class="card">
+                <h2>Analysis Results</h2>
+                
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <span>Calculating...</span>
+                </div>
+
+                <div id="resultsContainer" style="display: none;">
+                    <div class="result">
+                        <div class="result-item">
+                            <span class="result-label">Mean Soil Loss</span>
+                            <span>
+                                <span class="result-value" id="mean_loss">-</span>
+                                <span class="result-unit">tons/ha/year</span>
+                            </span>
+                        </div>
+
+                        <div class="result-item">
+                            <span class="result-label">Peak Soil Loss</span>
+                            <span>
+                                <span class="result-value" id="peak_loss">-</span>
+                                <span class="result-unit">tons/ha/year</span>
+                            </span>
+                        </div>
+
+                        <div class="result-item">
+                            <span class="result-label">Total Soil Loss</span>
+                            <span>
+                                <span class="result-value" id="total_soil_loss">-</span>
+                                <span class="result-unit">tons/year</span>
+                            </span>
+                        </div>
+
+                        <div class="result-item">
+                            <span class="result-label">Risk Category</span>
+                            <span id="risk_category" class="risk-category risk-low">-</span>
+                        </div>
+
+                        <div class="result-item">
+                            <span class="result-label">Confidence Level</span>
+                            <span>
+                                <span class="result-value" id="confidence">-</span>
+                                <span class="result-unit">%</span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 20px;">
+                        <h3 style="color: #2a5298; font-size: 14px; margin-bottom: 10px;">Contributing Factors</h3>
+                        <div id="factorsContainer"></div>
+                    </div>
+                </div>
+
+                <div id="placeholderText" style="text-align: center; color: #999; padding: 40px 20px;">
+                    Enter parameters and click "Calculate Erosion" to see results
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8000/api';
+
+        // Check server connection
+        async function checkConnection() {
+            try {
+                const response = await fetch('http://localhost:8000/', {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (response.ok) {
+                    document.getElementById('statusText').textContent = '✓ Connected to TerraSim Server';
+                    document.getElementById('status').className = 'status connected';
+                    document.getElementById('calculateBtn').disabled = false;
+                    return true;
+                }
+            } catch (e) {
+                document.getElementById('statusText').textContent = '✗ Cannot connect to server';
+                document.getElementById('status').className = 'status disconnected';
+                document.getElementById('calculateBtn').disabled = true;
+            }
+            return false;
+        }
+
+        // Calculate erosion
+        async function calculateErosion() {
+            const rainfall = parseFloat(document.getElementById('rainfall').value);
+            const slope = parseFloat(document.getElementById('slope').value);
+            const slope_length = parseFloat(document.getElementById('slope_length').value);
+            const soil_type = document.getElementById('soil_type').value;
+            const vegetation_cover = parseFloat(document.getElementById('vegetation_cover').value);
+            const support_practices = parseFloat(document.getElementById('support_practices').value);
+            const land_use = document.getElementById('land_use').value;
+            const area = parseFloat(document.getElementById('area').value);
+            const seasonality = document.getElementById('seasonality').value;
+
+            // Validate inputs
+            if (!rainfall || !slope || !slope_length || !vegetation_cover || !area) {
+                showError('Please fill in all required fields');
+                return;
+            }
+
+            hideError();
+            showLoading();
+            document.getElementById('resultsContainer').style.display = 'none';
+            document.getElementById('placeholderText').style.display = 'block';
+
+            try {
+                const response = await fetch(`${API_URL}/erosion/calculate`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        rainfall,
+                        slope,
+                        slope_length,
+                        soil_type,
+                        vegetation_cover,
+                        support_practices,
+                        land_use,
+                        area,
+                        seasonality
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displayResults(data);
+            } catch (error) {
+                showError(`Calculation error: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function displayResults(data) {
+            document.getElementById('mean_loss').textContent = data.mean_loss.toFixed(2);
+            document.getElementById('peak_loss').textContent = data.peak_loss.toFixed(2);
+            document.getElementById('total_soil_loss').textContent = data.total_soil_loss.toFixed(2);
+            document.getElementById('confidence').textContent = (data.confidence * 100).toFixed(1);
+
+            // Set risk category styling
+            const riskEl = document.getElementById('risk_category');
+            riskEl.textContent = data.risk_category.toUpperCase();
+            riskEl.className = 'risk-category risk-' + data.risk_category.toLowerCase();
+
+            // Display factors
+            const factorsContainer = document.getElementById('factorsContainer');
+            factorsContainer.innerHTML = '';
+            for (const [key, value] of Object.entries(data.factors)) {
+                const factorEl = document.createElement('div');
+                factorEl.className = 'result-item';
+                factorEl.innerHTML = `
+                    <span class="result-label">${key.replace(/_/g, ' ').toUpperCase()}</span>
+                    <span class="result-value">${(value * 100).toFixed(1)}%</span>
+                `;
+                factorsContainer.appendChild(factorEl);
+            }
+
+            document.getElementById('placeholderText').style.display = 'none';
+            document.getElementById('resultsContainer').style.display = 'block';
+        }
+
+        function showLoading() {
+            document.getElementById('loading').classList.add('show');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('show');
+        }
+
+        function showError(message) {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = message;
+            errorEl.classList.add('show');
+        }
+
+        function hideError() {
+            document.getElementById('error').classList.remove('show');
+        }
+
+        function clearForm() {
+            document.getElementById('rainfall').value = '800';
+            document.getElementById('slope').value = '15';
+            document.getElementById('slope_length').value = '30';
+            document.getElementById('vegetation_cover').value = '60';
+            document.getElementById('support_practices').value = '25';
+            document.getElementById('area').value = '10';
+            document.getElementById('resultsContainer').style.display = 'none';
+            document.getElementById('placeholderText').style.display = 'block';
+            hideError();
+        }
+
+        // Event listeners
+        document.getElementById('calculateBtn').addEventListener('click', calculateErosion);
+        document.getElementById('clearBtn').addEventListener('click', clearForm);
+
+        // Check connection on load
+        window.addEventListener('load', checkConnection);
+        setInterval(checkConnection, 5000); // Periodically check connection
+    </script>
+</body>
+</html>

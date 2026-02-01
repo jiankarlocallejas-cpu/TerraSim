@@ -190,11 +190,11 @@ def submit_parallel_simulations_endpoint(
         ]
     }
     """
-    from services.raster_service import _raster_service
+    from services.geospatial import get_raster
     import numpy as np
     
     # Load DEM
-    raster = _raster_service.get_by_id(db, dem_id)
+    raster = get_raster(db, raster_id=dem_id)
     if not raster:
         raise HTTPException(status_code=404, detail="DEM not found")
     

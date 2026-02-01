@@ -10,11 +10,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from db.session import get_db
 from schemas.analysis import AnalysisCreate, AnalysisResult, ErosionAnalysisParameters, ErosionAnalysisResults
-from services.analysis_service import (
+from services.geospatial.analysis import (
     create_analysis,
     get_analyses,
     get_analysis,
-    run_analysis
+    run_analysis,
+    CorrelationAnalysis,
+    RegressionAnalysis,
+    ModelValidation,
+    UncertaintyQuantification
 )
 from services.erosion_model import (
     TerraSIMErosionModel,
@@ -23,13 +27,7 @@ from services.erosion_model import (
     SoilModelParameters,
     ErosionFactors
 )
-from services.spatial_processor import DEMProcessor, LandCoverProcessor, SoilDataProcessor
-from services.statistical_analysis import (
-    CorrelationAnalysis,
-    RegressionAnalysis,
-    ModelValidation,
-    UncertaintyQuantification
-)
+from services.geospatial import DEMProcessor, LandCoverProcessor, SoilDataProcessor
 from api.deps import get_current_active_user
 from schemas.user import User
 
@@ -167,7 +165,7 @@ def rerun_analysis(
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
     # Reset status and run again
-    from services.analysis_service import update_analysis
+    from services.geospatial.analysis import update_analysis
     update_analysis(db, analysis_id, {"status": "pending", "results": {}})
     
     # Run analysis in background
@@ -414,7 +412,7 @@ def delete_analysis_by_id(
     if analysis.owner_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
-    from services.analysis_service import delete_analysis
+    from services.geospatial.analysis import delete_analysis
     success = delete_analysis(db, analysis_id=analysis_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete analysis")

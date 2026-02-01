@@ -71,8 +71,8 @@ class MainWindow(tk.Tk):
     def _create_main_ui(self):
         """Create main UI layout with QGIS-like interface"""
         # Color scheme - Modern dark theme with cyan accents
-        self.primary_color = '#1e1e2e'
-        self.secondary_color = '#2d2d44'
+        self.primary_color = "#63f588"
+        self.secondary_color = "#0c7e09"
         self.accent_color = '#00d4ff'
         self.text_color = '#ffffff'
         self.bg_light = '#f5f5f5'
@@ -154,6 +154,7 @@ class MainWindow(tk.Tk):
         menubar.add_command(label="📂 Load Base Map", command=self.load_map)
         menubar.add_command(label="⚙️  Load Parameters", command=self.load_parameters)
         menubar.add_command(label="✏️  Edit Parameters", command=self.edit_parameters)
+        menubar.add_command(label="➕ Add Parameter", command=self.add_parameter)
         menubar.add_command(label="📋 Default Parameters", command=self.load_default_parameters)
         menubar.add_separator()
         menubar.add_command(label="💾 Save Layout", command=self.save_layout)
@@ -165,7 +166,8 @@ class MainWindow(tk.Tk):
     def _create_data_menu(self):
         """Create Data menu"""
         menubar = tk.Menu(self, tearoff=1, bg=self.secondary_color, fg=self.text_color, activebackground=self.accent_color)
-        menubar.add_command(label="🗺️  Generate Sample DEM", command=self.generate_sample_dem)
+        menubar.add_command(label="� Load DEM", command=self.load_dem)
+        menubar.add_command(label="�🗺️  Generate Sample DEM", command=self.generate_sample_dem)
         menubar.add_command(label="📊 Load Raster", command=self.load_map)
         menubar.add_command(label="🎯 Load Shapefile", command=self.load_shapefile)
         menubar.add_separator()
@@ -217,6 +219,17 @@ class MainWindow(tk.Tk):
         menubar = tk.Menu(self, tearoff=1, bg=self.secondary_color, fg=self.text_color, activebackground=self.accent_color)
         menubar.add_command(label="📖 Documentation", command=self.show_documentation)
         menubar.add_command(label="❓ About TerraSim", command=self.show_about)
+        menubar.post(self.winfo_pointerx(), self.winfo_pointery())
+    
+    def _create_parameters_menu(self):
+        """Create Parameters menu"""
+        menubar = tk.Menu(self, tearoff=1, bg=self.secondary_color, fg=self.text_color, activebackground=self.accent_color)
+        menubar.add_command(label="📥 Load Parameters", command=self.load_parameters)
+        menubar.add_command(label="⚙️  Load Defaults", command=self.load_default_parameters)
+        menubar.add_command(label="✏️  Edit Parameters", command=self.edit_parameters)
+        menubar.add_command(label="➕ Add Parameter", command=self.add_parameter)
+        menubar.add_separator()
+        menubar.add_command(label="💾 Export Parameters", command=lambda: self.export_parameters_dialog())
         menubar.post(self.winfo_pointerx(), self.winfo_pointery())
     
     def _create_ribbon_toolbar(self):
@@ -709,6 +722,37 @@ class MainWindow(tk.Tk):
             command=self.generate_sample_dem
         ).pack(side=tk.LEFT, padx=10)
     
+    def _display_dem_visualization(self):
+        """Display loaded DEM as a 2D heatmap in the content frame"""
+        if self.current_dem is None:
+            return
+        
+        # Clear previous content (but not the right panel)
+        for widget in self.content_frame.winfo_children():
+            widget.destroy()
+        
+        dem = cast(np.ndarray, self.current_dem)
+        
+        # Create figure and plot
+        fig = Figure(figsize=(8, 6), dpi=100, facecolor='white')
+        ax = fig.add_subplot(111)
+        
+        # Display DEM as heatmap
+        im = ax.imshow(dem, cmap='terrain', aspect='auto', origin='upper')
+        ax.set_title(f'Loaded DEM ({dem.shape[0]}x{dem.shape[1]})', fontsize=12, fontweight='bold')
+        ax.set_xlabel('X (cells)')
+        ax.set_ylabel('Y (cells)')
+        
+        # Add colorbar
+        cbar = fig.colorbar(im, ax=ax, label='Elevation (m)')
+        
+        fig.tight_layout()
+        
+        # Embed in tkinter
+        canvas = FigureCanvasTkAgg(fig, master=self.content_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+    
     def load_dem(self):
         """Load DEM from file - supports multiple formats"""
         file_path = filedialog.askopenfilename(
@@ -785,6 +829,8 @@ class MainWindow(tk.Tk):
                     text=f"Status: Loaded ({dem.shape[0]}x{dem.shape[1]})",
                     fg='#27ae60'
                 )
+                # Display the DEM in the content frame
+                self._display_dem_visualization()
                 messagebox.showinfo(
                     "Success",
                     f"DEM loaded successfully!\n"
@@ -904,6 +950,8 @@ class MainWindow(tk.Tk):
                     f"Shape: {dem.shape}\n"
                     f"Range: {dem.min():.2f} to {dem.max():.2f}"
                 )
+                # Display the DEM visualization
+                self._display_dem_visualization()
                 dialog.destroy()
             
             except Exception as e:
@@ -1092,6 +1140,8 @@ class MainWindow(tk.Tk):
                 text=f"Status: Generated ({self.current_dem.shape[0]}x{self.current_dem.shape[1]})",
                 fg='#27ae60'
             )
+            # Display the generated DEM
+            self._display_dem_visualization()
             messagebox.showinfo("Success", f"Sample DEM generated!\nShape: {self.current_dem.shape}")
         except Exception as e:
             logger.error(f"Error generating DEM: {e}")
@@ -1247,7 +1297,19 @@ class MainWindow(tk.Tk):
         # Create edit window
         edit_window = tk.Toplevel(self)
         edit_window.title("Edit Simulation Parameters")
-        edit_window.geometry("500x600")
+        edit_window.geometry("550x650")
+        edit_window.transient(self)
+        edit_window.grab_set()
+        
+        # Title
+        title_label = tk.Label(
+            edit_window,
+            text="Edit Simulation Parameters",
+            font=("Arial", 12, "bold"),
+            bg='#f0f0f0',
+            fg='#2c3e50'
+        )
+        title_label.pack(fill=tk.X, padx=10, pady=10)
         
         # Create frame with scrollbar
         canvas = tk.Canvas(edit_window, bg='white')
@@ -1265,7 +1327,7 @@ class MainWindow(tk.Tk):
         # Add parameter inputs
         param_entries = {}
         for key, value in self.current_parameters.items():
-            frame = tk.Frame(scrollable_frame, bg='white')
+            frame = tk.Frame(scrollable_frame, bg='white', relief=tk.RAISED, bd=1)
             frame.pack(fill=tk.X, padx=10, pady=5)
             
             tk.Label(
@@ -1308,6 +1370,91 @@ class MainWindow(tk.Tk):
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save parameters: {e}")
         
+        def add_param_inline():
+            """Add a new parameter directly from edit dialog"""
+            add_inline_dialog = tk.Toplevel(edit_window)
+            add_inline_dialog.title("Add Parameter")
+            add_inline_dialog.geometry("350x200")
+            add_inline_dialog.transient(edit_window)
+            add_inline_dialog.grab_set()
+            
+            tk.Label(add_inline_dialog, text="Parameter Name:", font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=15, pady=(10, 0))
+            name_entry = tk.Entry(add_inline_dialog, font=("Arial", 10), width=30)
+            name_entry.pack(padx=15, pady=5)
+            name_entry.focus()
+            
+            tk.Label(add_inline_dialog, text="Parameter Value:", font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=15, pady=(5, 0))
+            value_entry = tk.Entry(add_inline_dialog, font=("Arial", 10), width=30)
+            value_entry.pack(padx=15, pady=5)
+            
+            def add_it():
+                name = name_entry.get().strip()
+                value = value_entry.get().strip()
+                
+                if not name or not value:
+                    messagebox.showwarning("Warning", "Please enter both name and value")
+                    return
+                
+                # Try to convert to float
+                try:
+                    converted_value = float(value)
+                except ValueError:
+                    converted_value = value
+                
+                # Add to current parameters
+                if self.current_parameters is not None:
+                    self.current_parameters[name] = converted_value
+                    param_entries[name] = None  # Mark as new
+                
+                # Add to UI in scrollable frame
+                frame = tk.Frame(scrollable_frame, bg='#e8f8f5', relief=tk.RAISED, bd=1)
+                frame.pack(fill=tk.X, padx=10, pady=5)
+                
+                tk.Label(
+                    frame,
+                    text=f"{name}:",
+                    font=("Arial", 10),
+                    bg='#e8f8f5',
+                    fg='#27ae60',
+                    width=20,
+                    anchor=tk.W
+                ).pack(side=tk.LEFT, padx=5)
+                
+                entry = tk.Entry(frame, font=("Arial", 10), width=20)
+                entry.insert(0, str(converted_value))
+                entry.pack(side=tk.RIGHT, padx=5)
+                param_entries[name] = entry
+                
+                # Refresh scroll region
+                canvas.configure(scrollregion=canvas.bbox("all"))
+                
+                logger.info(f"Added parameter in dialog: {name} = {converted_value}")
+                messagebox.showinfo("Success", f"Parameter '{name}' added!")
+                add_inline_dialog.destroy()
+            
+            btn_frame = tk.Frame(add_inline_dialog)
+            btn_frame.pack(pady=15)
+            
+            tk.Button(
+                btn_frame,
+                text="Add",
+                font=("Arial", 10, "bold"),
+                bg='#27ae60',
+                fg='white',
+                padx=20,
+                command=add_it
+            ).pack(side=tk.LEFT, padx=5)
+            
+            tk.Button(
+                btn_frame,
+                text="Cancel",
+                font=("Arial", 10, "bold"),
+                bg='#e74c3c',
+                fg='white',
+                padx=20,
+                command=add_inline_dialog.destroy
+            ).pack(side=tk.LEFT, padx=5)
+        
         tk.Button(
             button_frame,
             text="Save",
@@ -1332,14 +1479,168 @@ class MainWindow(tk.Tk):
         
         tk.Button(
             button_frame,
-            text="Export to JSON",
-            font=("Arial", 9),
+            text="➕ Add Parameter",
+            font=("Arial", 9, "bold"),
             bg='#3498db',
+            fg='white',
+            padx=15,
+            pady=8,
+            command=add_param_inline
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(
+            button_frame,
+            text="Export",
+            font=("Arial", 9),
+            bg='#f39c12',
             fg='white',
             padx=15,
             pady=8,
             command=lambda: self._export_parameters(param_entries)
         ).pack(side=tk.RIGHT, padx=5)
+    
+    def add_parameter(self):
+        """Add a new parameter to the current parameters"""
+        if self.current_parameters is None:
+            response = messagebox.askyesno(
+                "No Parameters",
+                "No parameters are currently loaded. Create new parameters with defaults first?"
+            )
+            if response:
+                self.current_parameters = self._get_default_parameters()
+                self._refresh_params_status()
+            else:
+                return
+        
+        # Create add parameter dialog
+        add_dialog = tk.Toplevel(self)
+        add_dialog.title("Add New Parameter")
+        add_dialog.geometry("400x250")
+        add_dialog.transient(self)
+        add_dialog.grab_set()
+        
+        # Title
+        tk.Label(
+            add_dialog,
+            text="Add New Simulation Parameter",
+            font=("Arial", 12, "bold"),
+            fg='#2c3e50'
+        ).pack(pady=15, padx=10)
+        
+        # Parameter name
+        tk.Label(add_dialog, text="Parameter Name:", font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(5, 0))
+        name_entry = tk.Entry(add_dialog, font=("Arial", 10), width=35)
+        name_entry.pack(padx=20, pady=5)
+        name_entry.focus()
+        
+        # Parameter value
+        tk.Label(add_dialog, text="Parameter Value:", font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(10, 0))
+        value_entry = tk.Entry(add_dialog, font=("Arial", 10), width=35)
+        value_entry.pack(padx=20, pady=5)
+        
+        # Parameter description (optional)
+        tk.Label(add_dialog, text="Description (optional):", font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(10, 0))
+        desc_entry = tk.Entry(add_dialog, font=("Arial", 9), width=35)
+        desc_entry.pack(padx=20, pady=5)
+        
+        # Buttons
+        button_frame = tk.Frame(add_dialog)
+        button_frame.pack(fill=tk.X, padx=20, pady=20)
+        
+        def add_new_param():
+            param_name = name_entry.get().strip()
+            param_value = value_entry.get().strip()
+            
+            if not param_name:
+                messagebox.showwarning("Warning", "Please enter a parameter name")
+                return
+            
+            if not param_value:
+                messagebox.showwarning("Warning", "Please enter a parameter value")
+                return
+            
+            # Check if parameter already exists
+            if self.current_parameters is not None and param_name in self.current_parameters:
+                response = messagebox.askyesno(
+                    "Parameter Exists",
+                    f"Parameter '{param_name}' already exists. Overwrite it?"
+                )
+                if not response:
+                    return
+            
+            # Try to convert to float, otherwise store as string
+            if self.current_parameters is not None:
+                try:
+                    self.current_parameters[param_name] = float(param_value)
+                except ValueError:
+                    self.current_parameters[param_name] = param_value
+            
+            logger.info(f"Added parameter: {param_name} = {param_value}")
+            self._refresh_params_status()
+            messagebox.showinfo(
+                "Success",
+                f"Parameter '{param_name}' added successfully!\n"
+                f"Value: {param_value}"
+            )
+            add_dialog.destroy()
+        
+        tk.Button(
+            button_frame,
+            text="Add Parameter",
+            font=("Arial", 10, "bold"),
+            bg='#27ae60',
+            fg='white',
+            padx=20,
+            pady=8,
+            command=add_new_param
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(
+            button_frame,
+            text="Cancel",
+            font=("Arial", 10, "bold"),
+            bg='#e74c3c',
+            fg='white',
+            padx=20,
+            pady=8,
+            command=add_dialog.destroy
+        ).pack(side=tk.LEFT, padx=5)
+    
+    def export_parameters_dialog(self):
+        """Export parameters to file - called from menu"""
+        if self.current_parameters is None:
+            messagebox.showwarning("Warning", "Please load parameters first")
+            return
+        
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[
+                ("JSON files", "*.json"),
+                ("CSV files", "*.csv"),
+                ("NumPy files", "*.npy"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_path:
+            try:
+                if file_path.endswith('.json'):
+                    with open(file_path, 'w') as f:
+                        json.dump(self.current_parameters, f, indent=2)
+                
+                elif file_path.endswith('.csv'):
+                    with open(file_path, 'w', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(self.current_parameters.keys())
+                        writer.writerow(self.current_parameters.values())
+                
+                elif file_path.endswith('.npy'):
+                    np.save(file_path, np.array([self.current_parameters], dtype=object))
+                
+                messagebox.showinfo("Success", f"Parameters exported to:\n{file_path}")
+                logger.info(f"Parameters exported to {file_path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export parameters: {e}")
     
     def _export_parameters(self, param_entries):
         """Export edited parameters to file"""
@@ -1546,19 +1847,58 @@ class MainWindow(tk.Tk):
                 on_complete=self._on_simulation_complete
             )
             calc_screen.pack(fill=tk.BOTH, expand=True)
-            calc_screen.start_simulation()
     
     def _on_simulation_complete(self):
         """Called when simulation completes"""
         self._update_history()
-        self._show_result_screen()
+        self._show_split_screens()
     
     def _on_time_series_complete(self):
         """Called when time series simulation completes"""
         self._update_history()
     
+    def _show_split_screens(self):
+        """Display calculation and results screens side by side"""
+        for widget in self.content_frame.winfo_children():
+            widget.destroy()
+        
+        # Create a frame to hold both screens side by side
+        split_frame = tk.Frame(self.content_frame, bg='white')
+        split_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Left side - Calculation/Simulation screen
+        left_frame = tk.Frame(split_frame, bg='white', relief=tk.SUNKEN, bd=1)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2, pady=2)
+        
+        calc_screen = CalculationScreen(
+            left_frame,
+            on_complete=None  # No callback needed when displayed alongside results
+        )
+        calc_screen.pack(fill=tk.BOTH, expand=True)
+        
+        # Right side - Results screen
+        right_frame = tk.Frame(split_frame, bg='white', relief=tk.SUNKEN, bd=1)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=2, pady=2)
+        
+        if self.current_result:
+            # Convert result to dict and serialize properly
+            result_dict = (
+                self.current_result.__dict__
+                if hasattr(self.current_result, '__dict__')
+                else self.current_result
+            )
+            
+            # Serialize numpy arrays and enums
+            serialized_result = self._serialize_result(result_dict)
+            
+            result_screen = ResultScreen(
+                right_frame,
+                serialized_result
+            )
+            result_screen.pack(fill=tk.BOTH, expand=True)
+    
     def _show_result_screen(self):
-        """Display results screen"""
+        """Display results screen only"""
         for widget in self.content_frame.winfo_children():
             widget.destroy()
         
@@ -1655,6 +1995,10 @@ class MainWindow(tk.Tk):
         def create_plot_async():
             """Create 3D plot in background to prevent UI blocking"""
             try:
+                if self.current_dem is None:
+                    logger.warning("No DEM loaded for 3D visualization")
+                    return
+                
                 # Create 3D plot window
                 fig = Figure(figsize=(10, 8), dpi=100)
                 ax = fig.add_subplot(111, projection='3d')
@@ -1665,8 +2009,8 @@ class MainWindow(tk.Tk):
                 y = np.arange(dem_data.shape[0])
                 X, Y = np.meshgrid(x, y)
                 
-                # Plot surface
-                surf = ax.plot_surface(X, Y, dem_data, cmap='terrain', alpha=0.8, edgecolor='none')
+                # Plot surface with improved colormap
+                surf = ax.plot_surface(X, Y, dem_data, cmap='gist_earth', alpha=0.85, edgecolor='none')
                 
                 # Customize plot
                 ax.set_xlabel('X (pixels)', fontweight='bold')
@@ -1753,6 +2097,10 @@ class MainWindow(tk.Tk):
         def create_erosion_plot_async():
             """Create erosion 3D plot in background to prevent UI blocking"""
             try:
+                if self.current_result is None or self.current_result.erosion_rate is None:
+                    logger.warning("No simulation results available")
+                    return
+                
                 # Create 3D plot window
                 fig = Figure(figsize=(10, 8), dpi=100)
                 ax = fig.add_subplot(111, projection='3d')
@@ -1768,7 +2116,7 @@ class MainWindow(tk.Tk):
                 
                 # Plot erosion as 3D surface using dem + erosion
                 combined = dem_data + erosion_data * 10  # Scale erosion for visibility
-                surf = ax.plot_surface(X, Y, combined, cmap='RdYlGn_r', alpha=0.8, edgecolor='none')
+                surf = ax.plot_surface(X, Y, combined, cmap='RdYlGn', alpha=0.85, edgecolor='none')
                 
                 # Customize plot
                 ax.set_xlabel('X (pixels)', fontweight='bold')
@@ -1839,10 +2187,22 @@ class MainWindow(tk.Tk):
         def create_plotly_async():
             """Create Plotly visualization in background thread"""
             try:
-                dem_data = self.current_dem
+                if go is None:
+                    logger.error("Plotly not available for visualization")
+                    self.after(0, lambda: messagebox.showerror("Error", "Plotly is not installed. Install it with: pip install plotly"))
+                    return
                 
-                # Create plotly 3D surface plot
-                fig = go.Figure(data=[go.Surface(z=dem_data, colorscale='earth')])
+                if self.current_dem is None:
+                    logger.warning("No DEM loaded for Plotly visualization")
+                    return
+                
+                dem_data = self.current_dem
+                if dem_data is None:
+                    logger.warning("DEM data is None")
+                    return
+                
+                # Create plotly 3D surface plot with improved colorscale
+                fig = go.Figure(data=[go.Surface(z=dem_data, colorscale='Viridis')])
                 
                 fig.update_layout(
                     title='Interactive 3D DEM Visualization (Plotly)',

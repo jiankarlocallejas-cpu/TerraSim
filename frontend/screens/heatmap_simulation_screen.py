@@ -18,9 +18,14 @@ if str(backend_path) not in sys.path:
     sys.path.insert(0, str(backend_path))
 
 try:
-    from backend.services.opengl_tkinter import OpenGLVisualizationWidget, AnimatedOpenGLCanvas  # type: ignore
+    from backend.services.visualization import GPURenderEngine as OpenGLVisualizationWidget  # type: ignore
+    AnimatedOpenGLCanvas = OpenGLVisualizationWidget
 except (ImportError, ModuleNotFoundError):
-    from services.opengl_tkinter import OpenGLVisualizationWidget, AnimatedOpenGLCanvas  # type: ignore
+    import tkinter as tk
+    class OpenGLVisualizationWidget(tk.Frame):
+        """Fallback visualization widget"""
+        pass
+    AnimatedOpenGLCanvas = OpenGLVisualizationWidget
 
 logger = logging.getLogger(__name__)
 

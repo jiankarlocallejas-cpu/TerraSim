@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database with PostGIS
+  database:
+    image: postgis/postgis:15-3.3
+    container_name: terrasim-postgres
+    environment:
+      POSTGRES_USER: terrasim_user
+      POSTGRES_PASSWORD: terrasim_password
+      POSTGRES_DB: terrasim
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U terrasim_user -d terrasim"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - terrasim-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: terrasim-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - terrasim-network
+
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: terrasim-api
+    environment:
+      DATABASE_URL: postgresql://terrasim_user:terrasim_password@database:5432/terrasim
+      REDIS_URL: redis://redis:6379
+      TERRASIM_ENV: production
+      DEBUG: "false"
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             python app.py"
+    networks:
+      - terrasim-network
+
+  # Celery Worker
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: terrasim-worker
+    environment:
+      DATABASE_URL: postgresql://terrasim_user:terrasim_password@database:5432/terrasim
+      REDIS_URL: redis://redis:6379
+      TERRASIM_ENV: production
+      DEBUG: "false"
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+    depends_on:
+      - database
+      - redis
+    command: python -m celery -A backend.core.celery worker -l info
+    networks:
+      - terrasim-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: terrasim-nginx
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+    networks:
+      - terrasim-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  terrasim-network:
+    driver: bridge

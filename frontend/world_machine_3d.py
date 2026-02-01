@@ -25,7 +25,7 @@ except ImportError:
 
 # Import new World Machine visualization system
 try:
-    from backend.services.world_machine_style import (
+    from backend.services.visualization.themes import (
         WorldMachineVisualizer,
         SimulationAnimationRenderer,
         WorldMachineColorScheme
@@ -586,7 +586,7 @@ class WorldMachine3DViewer:
         self.ax = self.fig.add_subplot(111)
         
         self.ax.imshow(frame)
-        self.ax.set_title(f'🌍 {scheme_name.title()} Color Scheme', 
+        self.ax.set_title(f'Terrain {scheme_name.title()} Color Scheme', 
                          color=self.colors.accent, fontsize=12, fontweight='bold')
         self.ax.axis('off')
         

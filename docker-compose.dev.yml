@@ -1,0 +1,98 @@
+# Development docker-compose with volume mounts for live editing
+
+version: '3.8'
+
+services:
+  database:
+    image: postgis/postgis:15-3.3
+    container_name: terrasim-postgres-dev
+    environment:
+      POSTGRES_USER: terrasim_user
+      POSTGRES_PASSWORD: terrasim_password
+      POSTGRES_DB: terrasim
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U terrasim_user -d terrasim"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - terrasim-network-dev
+
+  redis:
+    image: redis:7-alpine
+    container_name: terrasim-redis-dev
+    volumes:
+      - redis_data_dev:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - terrasim-network-dev
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: terrasim-api-dev
+    environment:
+      DATABASE_URL: postgresql://terrasim_user:terrasim_password@database:5432/terrasim
+      REDIS_URL: redis://redis:6379
+      TERRASIM_ENV: development
+      DEBUG: "true"
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "pip install -q -r requirements-dev.txt &&
+             alembic upgrade head &&
+             python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload"
+    networks:
+      - terrasim-network-dev
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: terrasim-worker-dev
+    environment:
+      DATABASE_URL: postgresql://terrasim_user:terrasim_password@database:5432/terrasim
+      REDIS_URL: redis://redis:6379
+      TERRASIM_ENV: development
+      DEBUG: "true"
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+    depends_on:
+      - database
+      - redis
+    command: >
+      sh -c "pip install -q -r requirements-dev.txt &&
+             python -m celery -A backend.core.celery worker -l debug"
+    networks:
+      - terrasim-network-dev
+
+volumes:
+  postgres_data_dev:
+    driver: local
+  redis_data_dev:
+    driver: local
+
+networks:
+  terrasim-network-dev:
+    driver: bridge

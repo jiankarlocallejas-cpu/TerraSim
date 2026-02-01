@@ -1,5 +1,5 @@
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 
@@ -14,6 +14,7 @@ class Bounds(BaseModel):
 
 class PointCloudBase(BaseModel):
     name: Optional[str] = None
+    file_path: Optional[str] = None
     srs: Optional[str] = None
     bounds: Optional[Bounds] = None
     metadata: Dict[str, Any] = {}
@@ -25,6 +26,9 @@ class PointCloudCreate(PointCloudBase):
 
 class PointCloudUpdate(BaseModel):
     name: Optional[str] = None
+    file_path: Optional[str] = None
+    file_size: Optional[int] = None
+    point_count: Optional[int] = None
     srs: Optional[str] = None
     bounds: Optional[Bounds] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -42,8 +46,7 @@ class PointCloud(PointCloudBase):
     project_id: Optional[int] = None
     owner_id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PointCloudProcess(BaseModel):

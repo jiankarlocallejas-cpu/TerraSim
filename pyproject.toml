@@ -1,0 +1,189 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "terrasim"
+version = "3.0.0"
+description = "Advanced erosion modeling platform using USPED model"
+readme = "README_MAIN.md"
+license = {text = "MIT"}
+authors = [
+    {name = "TerraSim Contributors"}
+]
+keywords = ["gis", "erosion", "modeling", "usped", "geospatial"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.9"
+
+dependencies = [
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "geopandas>=0.13.0",
+    "rasterio>=1.3.0",
+    "shapely>=2.0.0",
+    "scipy>=1.11.0",
+    "scikit-learn>=1.3.0",
+    "fastapi>=0.103.0",
+    "uvicorn>=0.23.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
+    "alembic>=1.13.0",
+    "pydantic>=2.4.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "cryptography>=41.0.0",
+    "pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-watch>=4.2.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "pylint>=2.17.0",
+    "mypy>=1.4.0",
+    "bandit>=1.7.5",
+    "pre-commit>=3.3.0",
+    "mkdocs>=1.4.0",
+    "mkdocs-material>=9.1.0",
+]
+
+gpu = [
+    "torch>=2.0.0",
+    "torch-geometric>=2.3.0",
+]
+
+docs = [
+    "mkdocs>=1.4.0",
+    "mkdocs-material>=9.1.0",
+    "mkdocs-mermaid2-plugin>=0.6.0",
+    "mkdocs-pdf-export-plugin>=0.5.0",
+]
+
+[project.urls]
+"Bug Tracker" = "https://github.com/yourusername/TerraSim/issues"
+"Documentation" = "https://docs.terrasim.io"
+"Repository" = "https://github.com/yourusername/TerraSim"
+"Changelog" = "https://github.com/yourusername/TerraSim/releases"
+
+[project.scripts]
+terrasim = "terrasim:main"
+terrasim-api = "app:main"
+terrasim-admin = "admin_console:main"
+
+[tool.setuptools]
+packages = ["backend", "frontend"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.venv
+  | build
+  | dist
+  | alembic
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_mode = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+skip_glob = [".venv", "build", "dist", "alembic"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+ignore_missing_imports = true
+exclude = ["alembic/", "build/", "dist/"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers --cov=backend --cov-report=term-missing"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
+[tool.coverage.run]
+source = ["backend"]
+omit = [
+    "*/tests/*",
+    "*/site-packages/*",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+
+[tool.pylint.messages_control]
+disable = [
+    "C0111",  # missing-docstring
+    "C0103",  # invalid-name
+    "R0913",  # too-many-arguments
+    "R0914",  # too-many-locals
+    "R0915",  # too-many-statements
+    "W0212",  # protected-access
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "alembic"]
+tests = ["B201", "B301", "B302", "B303", "B304", "B305", "B306"]
+
+[tool.versioneer]
+VCS = "git"
+style = "pep440"
+versionfile_source = "backend/_version.py"
+versionfile_build = "backend/_version.py"
+tag_prefix = "v"

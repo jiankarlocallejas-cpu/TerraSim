@@ -46,9 +46,11 @@ app.add_middleware(
 )
 
 # Serve static files (if directory exists)
-static_dir = Path("../frontend/dist")
+static_dir = Path("./static")
+if not static_dir.exists():
+    static_dir = Path("../frontend-web/dist")
 if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
 # Pydantic Models
 class ErosionInput(BaseModel):

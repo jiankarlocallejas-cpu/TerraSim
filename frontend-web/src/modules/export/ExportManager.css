@@ -1,0 +1,114 @@
+.export-manager {
+  padding: var(--spacing-4, 16px);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  backdrop-filter: blur(10px);
+}
+
+.export-manager h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--foreground);
+  margin: 0 0 var(--spacing-4, 16px) 0;
+}
+
+.format-selector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3, 12px);
+  margin-bottom: var(--spacing-4, 16px);
+}
+
+.format-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-3, 12px);
+  padding: var(--spacing-3, 12px);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.format-option input[type='radio'] {
+  margin-top: 4px;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+.format-option input[type='radio']:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.format-option:hover {
+  border-color: var(--primary);
+  background: rgba(0, 212, 255, 0.08);
+}
+
+.format-option input[type='radio']:checked ~ .format-info,
+.format-option input:checked ~ .format-info {
+  color: var(--foreground);
+}
+
+.format-option input:checked {
+  color: var(--primary);
+}
+
+.format-info {
+  flex: 1;
+}
+
+.format-info strong {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--foreground);
+  margin-bottom: 4px;
+}
+
+.format-info p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+
+.format-option:has(input:checked) .format-info strong {
+  color: var(--primary);
+}
+
+.export-manager .btn {
+  width: 100%;
+  padding: var(--spacing-3, 12px);
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: linear-gradient(135deg, var(--primary) 0%, #0099cc 100%);
+  color: white;
+}
+
+.export-manager .btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0, 212, 255, 0.3);
+}
+
+.export-manager .btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@media (max-width: 768px) {
+  .format-selector {
+    gap: var(--spacing-2, 8px);
+  }
+
+  .format-option {
+    padding: var(--spacing-2, 8px);
+  }
+}

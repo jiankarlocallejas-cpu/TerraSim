@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from db.session import get_db
 from schemas.pointcloud import PointCloud, PointCloudCreate, PointCloudProcess, PointCloudStats
-from services.pointcloud_service import (
+from services.geospatial import (
     process_pointcloud_file,
     get_pointclouds,
     get_pointcloud,
@@ -61,7 +61,7 @@ async def upload_pointcloud(
         db=db
     )
     
-    from services.pointcloud_service import create_pointcloud
+    from services.geospatial import create_pointcloud
     db_pointcloud = create_pointcloud(db, pointcloud_data, current_user.id)
     
     return db_pointcloud

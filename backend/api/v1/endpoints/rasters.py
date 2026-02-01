@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from db.session import get_db
 from schemas.raster import Raster, RasterCreate, RasterProcess, RasterStats
-from services.raster_service import (
+from services.geospatial import (
     process_raster_file,
     get_rasters,
     get_raster,
@@ -64,7 +64,7 @@ async def upload_raster(
         db=db
     )
     
-    from services.raster_service import create_raster
+    from services.geospatial import create_raster
     db_raster = create_raster(db, raster_data, current_user.id)
     
     return db_raster
@@ -254,11 +254,11 @@ async def process_raster_job(job_id: str, raster_id: int, config: dict, db: Sess
 
 async def create_cog_task(raster_id: int, input_path: str, output_path: str, db: Session):
     """Background task to create COG"""
-    from services.raster_service import create_cog
+    from services.geospatial import create_cog
     
     success = create_cog(input_path, output_path)
     
     # Update raster record with COG path
     if success:
-        from services.raster_service import update_raster
+        from services.geospatial import update_raster
         update_raster(db, raster_id, {"metadata": {"cog_path": output_path}})
