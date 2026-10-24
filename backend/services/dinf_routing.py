@@ -12,10 +12,11 @@ import math
 from typing import Optional, Sequence
 
 import numpy as np
+from typing import Optional, Tuple
 
 
 # Counterclockwise from east; raster rows increase south.
-_NEIGHBORS: tuple[tuple[int, int], ...] = (
+_NEIGHBORS: Tuple[Tuple[int, int], ...] = (
     (0, 1),    # E
     (-1, 1),   # NE
     (-1, 0),   # N
