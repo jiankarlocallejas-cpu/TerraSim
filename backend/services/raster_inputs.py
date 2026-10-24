@@ -236,6 +236,9 @@ def save_geotiff(
                 nodata=nodata,
                 compress="deflate",
             )
+            if not profile.get("tiled", False):
+                profile.pop("blockxsize", None)
+                profile.pop("blockysize", None)
             if np.any(~mask):
                 output = values.copy()
                 output[~mask] = nodata
@@ -248,4 +251,3 @@ def save_geotiff(
     except rasterio.errors.RasterioError as exc:
         raise RasterInputError(f"could not write result raster {destination}: {exc}") from exc
     return str(destination)
-

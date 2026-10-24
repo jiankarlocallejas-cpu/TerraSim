@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from PyQt5.QtCore import QThread, Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPixmap
 from backend.services.paper_model import estimate_reference_memory_bytes
 from backend.services.run_manifest import (
     RunManifestError,
@@ -450,6 +450,30 @@ class TerraSimDesktop(QMainWindow):
         summary_layout.addWidget(self.results_summary)
         layout.addWidget(summary_panel)
 
+        preview_panel = QFrame()
+        preview_panel.setObjectName("panel")
+        preview_layout = QHBoxLayout(preview_panel)
+        preview_layout.setContentsMargins(18, 16, 18, 16)
+        preview_layout.setSpacing(18)
+        (
+            elevation_column,
+            self.elevation_preview_image,
+            self.elevation_preview_caption,
+        ) = self._preview_column(
+            "Final elevation", "Run a simulation to preview the elevation raster."
+        )
+        (
+            susceptibility_column,
+            self.susceptibility_preview_image,
+            self.susceptibility_preview_caption,
+        ) = self._preview_column(
+            "Susceptibility index",
+            "A criterion overlay is required to calculate susceptibility.",
+        )
+        preview_layout.addLayout(elevation_column, 1)
+        preview_layout.addLayout(susceptibility_column, 1)
+        layout.addWidget(preview_panel)
+
         exports = QHBoxLayout()
         self.export_elevation_button = QPushButton("Export final elevation GeoTIFF")
         self.export_elevation_button.clicked.connect(self._export_elevation)
@@ -470,6 +494,27 @@ class TerraSimDesktop(QMainWindow):
         layout.addLayout(exports)
         layout.addStretch(1)
         return page
+
+    @staticmethod
+    def _preview_column(title: str, initial_caption: str):
+        column = QVBoxLayout()
+        heading = QLabel(title)
+        heading.setObjectName("sectionTitle")
+        column.addWidget(heading)
+        image = QLabel("Preview is sampled for display")
+        image.setAlignment(Qt.AlignCenter)
+        image.setMinimumSize(320, 220)
+        image.setObjectName("rasterPreview")
+        column.addWidget(image, 1)
+        caption = QLabel(initial_caption)
+        caption.setWordWrap(True)
+        caption.setObjectName("muted")
+        column.addWidget(caption)
+        note = QLabel("Downsampled display · export GeoTIFF for full resolution")
+        note.setWordWrap(True)
+        note.setObjectName("muted")
+        column.addWidget(note)
+        return column, image, caption
 
     def _start_simulation(self) -> None:
         if self._simulation_thread is not None and self._simulation_thread.isRunning():
@@ -537,6 +582,10 @@ class TerraSimDesktop(QMainWindow):
             "total_time": self.total_time_spin.value(),
             "max_timestep": self.max_timestep_spin.value(),
         }
+        self._last_result = None
+        self.export_elevation_button.setEnabled(False)
+        self.export_susceptibility_button.setEnabled(False)
+        self._clear_raster_previews()
         self.run_progress.setValue(0)
         self.run_status.setText(
             f"Loading {dem['name']} · estimated reference working memory "
@@ -613,6 +662,18 @@ class TerraSimDesktop(QMainWindow):
             result.susceptibility_index is not None
         )
         self.save_run_record_button.setEnabled(True)
+        self._display_raster_preview(
+            self.elevation_preview_image,
+            self.elevation_preview_caption,
+            result.elevation_preview,
+            "m",
+        )
+        self._display_raster_preview(
+            self.susceptibility_preview_image,
+            self.susceptibility_preview_caption,
+            result.susceptibility_preview,
+            "index units",
+        )
         self.run_status.setText(run_state)
         self.statusBar().showMessage(run_state, 5000)
         self.navigation.setCurrentRow(4)
@@ -779,6 +840,9 @@ class TerraSimDesktop(QMainWindow):
         self.export_elevation_button.setEnabled(False)
         self.export_susceptibility_button.setEnabled(False)
         self.save_run_record_button.setEnabled(True)
+        self._clear_raster_previews(
+            "Re-run or load exported GeoTIFFs to display spatial previews."
+        )
         self.results_summary.setText(self._format_run_manifest(manifest))
         self.navigation.setCurrentRow(4)
         self.statusBar().showMessage(f"Run record opened · {Path(path).name}", 5000)
@@ -816,6 +880,31 @@ class TerraSimDesktop(QMainWindow):
             state = "not exported" if output_path is None else output_path
             lines.append(f"Output · {name}: {state}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _display_raster_preview(image_label, caption_label, preview, units: str) -> None:
+        if preview is None:
+            image_label.setPixmap(QPixmap())
+            image_label.setText("Not calculated")
+            caption_label.setText("No raster result was produced for this layer.")
+            return
+        pixmap = QPixmap.fromImage(preview.image).scaled(
+            480, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        image_label.setText("")
+        image_label.setPixmap(pixmap)
+        caption_label.setText(
+            f"Grid {preview.source_width} × {preview.source_height} · "
+            f"range {preview.minimum:.6g}–{preview.maximum:.6g} {units}"
+        )
+
+    def _clear_raster_previews(self, message: str = "No spatial result preview yet.") -> None:
+        self.elevation_preview_image.setPixmap(QPixmap())
+        self.elevation_preview_image.setText("Preview is sampled for display")
+        self.elevation_preview_caption.setText(message)
+        self.susceptibility_preview_image.setPixmap(QPixmap())
+        self.susceptibility_preview_image.setText("Preview is sampled for display")
+        self.susceptibility_preview_caption.setText(message)
 
     def _update_manifest_outputs(self) -> None:
         if self._last_manifest is None:
@@ -1253,6 +1342,10 @@ class TerraSimDesktop(QMainWindow):
                 margin: -6px 0; border-radius: 8px;
             }
             #layerList { background: white; border: 1px solid #e1e6eb; border-radius: 8px; }
+            #rasterPreview {
+                background: #e7ecef; border: 1px solid #d7dee5; border-radius: 6px;
+                color: #637181;
+            }
         """
 
 

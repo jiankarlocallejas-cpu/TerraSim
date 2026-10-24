@@ -18,6 +18,7 @@ from backend.services.raster_inputs import (
     load_geotiff,
     require_aligned,
 )
+from desktop.raster_preview import RasterPreview, render_raster_preview
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,8 @@ class DesktopSimulationResult:
     criterion_count: int
     model_settings: dict[str, float]
     input_layers: list[dict[str, Any]]
+    elevation_preview: RasterPreview
+    susceptibility_preview: RasterPreview | None
 
 
 class SimulationWorker(QObject):
@@ -140,6 +143,20 @@ class SimulationWorker(QObject):
                 progress=self._on_progress,
                 cancel_requested=self._is_cancelled,
             )
+            elevation_preview = render_raster_preview(
+                simulation.elevation,
+                simulation.valid_mask,
+                palette="terrain",
+            )
+            susceptibility_preview = (
+                render_raster_preview(
+                    susceptibility,
+                    np.isfinite(susceptibility),
+                    palette="susceptibility",
+                )
+                if susceptibility is not None
+                else None
+            )
             self.succeeded.emit(
                 DesktopSimulationResult(
                     dem_path=dem_grid.path,
@@ -149,6 +166,8 @@ class SimulationWorker(QObject):
                     criterion_count=len(self.criterion_layers),
                     model_settings=dict(self.model_settings),
                     input_layers=[self.dem_layer, *self.criterion_layers],
+                    elevation_preview=elevation_preview,
+                    susceptibility_preview=susceptibility_preview,
                 )
             )
         except Exception as exc:

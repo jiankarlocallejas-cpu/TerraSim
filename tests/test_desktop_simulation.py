@@ -37,7 +37,8 @@ def _write_raster(path, data):
         dataset.write(data.astype(np.float32), 1)
 
 
-def test_qt_runs_in_background_and_exports_geotiffs(app, tmp_path, monkeypatch):
+def test_qt_runs_in_background_and_exports_geotiffs(app, tmp_path, monkeypatch, caplog):
+    caplog.set_level("WARNING", logger="rasterio._env")
     dem_path = tmp_path / "dem.tif"
     criterion_path = tmp_path / "criterion.tif"
     elevation = np.arange(64, dtype=np.float32).reshape(8, 8)
@@ -80,6 +81,9 @@ def test_qt_runs_in_background_and_exports_geotiffs(app, tmp_path, monkeypatch):
     assert window._last_result.criterion_count == 1
     assert window.pages.currentIndex() == 4
     assert "Completed" in window.results_summary.text()
+    assert not window.elevation_preview_image.pixmap().isNull()
+    assert "Grid 8 × 8" in window.elevation_preview_caption.text()
+    assert not window.susceptibility_preview_image.pixmap().isNull()
 
     elevation_output = tmp_path / "final-elevation.tif"
     monkeypatch.setattr(
@@ -107,6 +111,7 @@ def test_qt_runs_in_background_and_exports_geotiffs(app, tmp_path, monkeypatch):
         assert dataset.shape == criterion.shape
         assert dataset.read(1)[0, 0] == pytest.approx(0.0)
         assert dataset.read(1)[-1, -1] == pytest.approx(1.0)
+    assert "BLOCKXSIZE can only be used with TILED=YES" not in caplog.text
 
     manifest_path = tmp_path / "run.terrasim-run.json"
     monkeypatch.setattr(
@@ -136,6 +141,9 @@ def test_qt_runs_in_background_and_exports_geotiffs(app, tmp_path, monkeypatch):
     assert str(elevation_output) in window.results_summary.text()
     assert not window.export_elevation_button.isEnabled()
     assert not window.export_susceptibility_button.isEnabled()
+    stored_pixmap = window.elevation_preview_image.pixmap()
+    assert stored_pixmap is None or stored_pixmap.isNull()
+    assert "Re-run or load exported GeoTIFFs" in window.elevation_preview_caption.text()
 
     window.close()
     app.processEvents()
