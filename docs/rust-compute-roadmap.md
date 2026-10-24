@@ -41,7 +41,9 @@ For each kernel, compare Rust with the Python reference on identical small input
 
 ### 5. Finish and evaluate D-infinity routing
 
-The previous prototype attempted D-infinity (D∞) routing but did not finish it. Treat it as a DEM-based flow-direction and upslope-contributing-area method: it selects a steepest-downslope angle over triangular facets and apportions contributing area to downslope cells. It is a terrain-routing algorithm, not a fluid dynamics solver. Compare its direction and accumulation behavior with established reference cases before using its outputs in a model. Tiled accumulation needs special care because flow dependencies cross tile boundaries.
+The previous prototype attempted D-infinity (D∞) routing but did not finish it. This branch now has a Python reference implementation in backend/services/dinf_routing.py and connects it to the older USPED workflow. It selects a steepest-downslope direction over triangular facets and proportionally routes contributing area to lower neighbors using a topological queue. The implementation leaves flats and depressions as terminal cells instead of silently filling them.
+
+This reference is a correctness starting point, not a claim of large-raster performance: cell/facet evaluation currently uses Python loops. The next compute step is to compare it with published reference cases, establish explicit depression/nodata behavior, then port the profiled kernels to Rust. The compact receiver representation avoids a full two-index-per-cell routing matrix; out-of-core accumulation still needs a method that preserves dependencies across tile boundaries.
 
 Reference: Tarboton (1997), [A new method for the determination of flow directions and upslope areas in grid digital elevation models](https://doi.org/10.1029/96WR03137).
 
