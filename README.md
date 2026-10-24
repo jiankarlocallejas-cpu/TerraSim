@@ -23,12 +23,13 @@ On Windows, `run.bat` launches the same application. On macOS and Linux, use `ba
 - Save and reopen raster roles, input metadata, and model controls in a `.terrasim.json` project.
 - Run MCE susceptibility and the paper-aligned Exner terrain update on a background Qt worker with progress, cancellation, and an approximate memory preflight.
 - Review timestep, elevation-volume, maximum-step-change, and susceptibility summaries; export final elevation and susceptibility GeoTIFFs with source-grid metadata.
+- Save and reopen a `.terrasim-run.json` record with raster metadata, exact model settings, diagnostics, coefficient provenance, and exported output paths.
 
 ## Model status
 
 The Python reference services include D-infinity terrain routing and a weighted susceptibility overlay plus conservative Exner terrain update. D-infinity estimates flow direction and contributing area; it is not a water-flow solver. The Exner update applies sediment-flux divergence with closed no-flux boundaries, nodata masks, and explicit stability limits. The Qt Run workflow loads aligned rasters, computes the selected model, shows run diagnostics, and exports GeoTIFF results.
 
-The solver remains a small-grid Python reference. Tiled/out-of-core processing, reopening saved runs, run manifests, map previews, and Rust acceleration are not implemented yet. Memory preflight is an estimate, not an operating-system guarantee. The relative `α` and `β` controls are exploratory multipliers; the paper does not provide a validated conversion from soil or rainfall inputs to those coefficients. Users must enter values and record their provenance before scientific interpretation.
+The solver is a small-grid reference implementation. An optional Rust extension now evaluates sediment-flux divergence and the explicit timestep bound; install it with `python -m pip install ./rust/terrasim_compute` after installing the Rust toolchain and a C++ build toolchain. When the extension is absent, TerraSim uses the Python reference path. On the Windows CI runner, the Rust-enabled 1024×1024, 10-step case matched the Python output exactly and ran 3.01× faster; this is one benchmark, not a general large-raster guarantee. Saved run records store paths and metadata rather than raster arrays, so reopening a record restores its report but does not load prior outputs for further export. Tiled/out-of-core processing, spatial previews, and scenario comparison are still pending. Memory preflight is an estimate, not an operating-system guarantee. The relative `α` and `β` controls are exploratory multipliers; the paper does not provide a validated conversion from soil or rainfall inputs to those coefficients. Users must enter values and record their provenance before scientific interpretation.
 
 TerraSim is not CFD-capable. A water-flow solver would need a separate governing-equation, boundary-condition, and validation phase.
 
