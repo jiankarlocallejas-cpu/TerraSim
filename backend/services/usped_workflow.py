@@ -10,6 +10,8 @@ from scipy.ndimage import convolve
 import logging
 from enum import Enum
 
+from .dinf_routing import route_dinf
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,6 +68,7 @@ class USPEDWorkflow:
         self.slope = None
         self.aspect = None
         self.flow_accum = None
+        self.flow_direction = None
         
         # Flow parameters
         self.m_exponent = 1.0  # Flow accumulation exponent
@@ -168,26 +171,33 @@ class USPEDWorkflow:
         """Step 4: Compute flow accumulation"""
         logger.info("Step 4: Computing flow accumulation...")
         
-        # Fill sinks first
-        filled = self._fill_sinks(self.elevation)
-        
-        # Compute flow direction
-        flow_dir = self._compute_flow_direction(filled)
-        
-        # Compute flow accumulation
-        self.flow_accum = self._compute_flow_accum(flow_dir, filled.shape)
+        # D-infinity routing leaves depressions as explicit terminal cells.
+        routing = route_dinf(self.elevation, cell_size_x=self.cell_size)
+        self.flow_direction = routing.flow_direction
+        self.flow_accum = routing.contributing_area
         
         self.current_step = WorkflowStep.COMPUTE_FLOW
+        self.results['flow_direction'] = self.flow_direction
         self.results['flow_accum'] = self.flow_accum
+        self.results['routing_terminal_mask'] = routing.terminal_mask
         
-        logger.info(f"Flow accumulation computed: min={np.min(self.flow_accum):.2f}, max={np.max(self.flow_accum):.2f}")
+        valid_area = self.flow_accum[routing.valid_mask]
+        terminal_count = int(np.count_nonzero(routing.terminal_mask))
+        area_min = float(np.min(valid_area)) if valid_area.size else 0.0
+        area_max = float(np.max(valid_area)) if valid_area.size else 0.0
+        area_mean = float(np.mean(valid_area)) if valid_area.size else 0.0
+        logger.info(
+            "D-infinity contributing area computed: min=%.2f, max=%.2f, terminal cells=%d",
+            area_min, area_max, terminal_count,
+        )
         
         return {
-            'step': 'Compute Flow Accumulation',
-            'min': float(np.min(self.flow_accum)),
-            'max': float(np.max(self.flow_accum)),
-            'mean': float(np.mean(self.flow_accum)),
-            'status': 'Flow accumulation computed'
+            'step': 'D-infinity Flow Routing',
+            'min_contributing_area': area_min,
+            'max_contributing_area': area_max,
+            'mean_contributing_area': area_mean,
+            'terminal_cells': terminal_count,
+            'status': 'D-infinity routing computed; depressions remain terminal'
         }
     
     def step_5_compute_lst(self) -> Dict[str, Any]:
@@ -197,12 +207,12 @@ class USPEDWorkflow:
         if self.slope is None or self.flow_accum is None:
             raise ValueError("Slope and flow accumulation required")
         
-        # LST = (flow_accum * cell_size)^m * (sin(slope))^n
+        # LST = contributing_area^m * (sin(slope))^n; area is in map units squared.
         # Convert slope to radians
         slope_rad = np.radians(self.slope)
         
-        # Upslope area contribution
-        upslope_area = self.flow_accum * self.cell_size
+        # D-infinity returns physical contributing area in square map units.
+        upslope_area = self.flow_accum
         
         # Compute LST
         lst = np.power(upslope_area, self.m_exponent) * np.power(np.sin(slope_rad), self.n_exponent)
@@ -254,19 +264,20 @@ class USPEDWorkflow:
         """Step 7: Compute sediment flow components in x and y directions"""
         logger.info("Step 7: Computing flow components...")
         
-        if 'sedflow' not in self.results or self.aspect is None:
-            raise ValueError("Sediment flow and aspect required")
+        if 'sedflow' not in self.results or self.flow_direction is None:
+            raise ValueError("Sediment flow and D-infinity direction required")
         
         sedflow = self.results['sedflow']
         
-        # Convert aspect to radians for computation
-        aspect_rad = np.radians(self.aspect)
-        
-        # Sediment flow components
-        # qsx = Q * cos(aspect)
-        # qsy = Q * sin(aspect)
-        sedflow_x = sedflow * np.cos(aspect_rad)
-        sedflow_y = sedflow * np.sin(aspect_rad)
+        # Direction is radians counterclockwise from east. Terminal/nodata
+        # cells have NaN direction and carry no routed flux.
+        valid_direction = np.isfinite(self.flow_direction)
+        sedflow_x = np.where(
+            valid_direction, sedflow * np.cos(self.flow_direction), 0.0
+        )
+        sedflow_y = np.where(
+            valid_direction, sedflow * np.sin(self.flow_direction), 0.0
+        )
         
         self.results['sedflow_x'] = sedflow_x
         self.results['sedflow_y'] = sedflow_y
@@ -292,11 +303,12 @@ class USPEDWorkflow:
         
         # Compute derivatives using central differences
         kernel_x = np.array([[-1, 0, 1]]) / (2.0 * self.cell_size)
-        kernel_y = np.array([[-1], [0], [1]]) / (2.0 * self.cell_size)
+        # Raster rows increase south; map-coordinate y increases north.
+        kernel_y = -np.array([[-1], [0], [1]]) / (2.0 * self.cell_size)
         
         # dqsx/dx
         dqsx_dx = convolve(sedflow_x, kernel_x)
-        # dqsy/dy
+        # dqsy/dy in north-positive coordinates
         dqsy_dy = convolve(sedflow_y, kernel_y)
         
         self.results['dqsx_dx'] = dqsx_dx
@@ -410,36 +422,3 @@ class USPEDWorkflow:
             workflow_results['error'] = str(e)
         
         return workflow_results
-    
-    # Helper methods
-    @staticmethod
-    def _fill_sinks(dem: np.ndarray) -> np.ndarray:
-        """Fill sinks in DEM using iterative approach"""
-        filled = dem.copy().astype(float)
-        
-        for _ in range(10):  # Iterations
-            kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]]) / 8.0
-            neighborhood_min = convolve(filled, kernel, mode='constant', cval=filled.max())
-            filled = np.maximum(dem, neighborhood_min)
-        
-        return filled
-    
-    @staticmethod
-    def _compute_flow_direction(dem: np.ndarray) -> np.ndarray:
-        """Compute D8 flow direction"""
-        # Steepest descent direction using numpy gradient
-        dy, dx = np.gradient(-dem)
-        flow_dir = np.arctan2(dy, dx)
-        return flow_dir
-    
-    @staticmethod
-    def _compute_flow_accum(flow_dir: np.ndarray, shape: Tuple) -> np.ndarray:
-        """Compute flow accumulation"""
-        flow_accum = np.ones(shape)
-        
-        # Simple flow accumulation using D8
-        for _ in range(5):  # Simplified iterations
-            kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]]) / 8.0
-            flow_accum = convolve(flow_accum, kernel, mode='constant', cval=0)
-        
-        return flow_accum
