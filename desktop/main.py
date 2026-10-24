@@ -76,6 +76,10 @@ class ParameterControl(QWidget):
     def multiplier(self) -> float:
         return self._value / 100.0
 
+    def set_multiplier(self, value: float) -> None:
+        bounded = min(3.0, max(0.1, float(value)))
+        self.slider.setValue(round(bounded * 100))
+
 
 class TerraSimDesktop(QMainWindow):
     """Main window for TerraSim's native Qt desktop application."""
@@ -391,6 +395,8 @@ class TerraSimDesktop(QMainWindow):
         self.project_path = None
         self.layers.clear()
         self.layer_list.clear()
+        self.alpha_control.set_multiplier(1.0)
+        self.beta_control.set_multiplier(1.0)
         self.project_label.setText("Untitled project")
         self.statusBar().showMessage("New project", 3000)
 
@@ -406,6 +412,10 @@ class TerraSimDesktop(QMainWindow):
             self.layer_list.clear()
             for layer in self.layers:
                 self.layer_list.addItem(layer.get("name", Path(layer["path"]).name))
+            controls = payload.get("model_controls", {})
+            if isinstance(controls, dict):
+                self.alpha_control.set_multiplier(controls.get("alpha_multiplier", 1.0))
+                self.beta_control.set_multiplier(controls.get("beta_multiplier", 1.0))
             self.project_path = Path(path)
             self.project_label.setText(self.project_path.name)
             self.statusBar().showMessage("Project opened", 5000)
@@ -485,16 +495,12 @@ class TerraSimDesktop(QMainWindow):
             #layerList { background: white; border: 1px solid #e1e6eb; border-radius: 8px; }
         """
 
-    def set_font(self) -> None:
-        font = QFont("Segoe UI", 10)
-        QApplication.setFont(font)
-
 
 def main() -> None:
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setFont(QFont("Segoe UI", 10))
     window = TerraSimDesktop()
-    window.set_font()
     window.show()
     sys.exit(app.exec_())
 
