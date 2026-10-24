@@ -21,9 +21,9 @@ Keep the old USPED workflow available as a reference while the paper-aligned mod
 - Save and reopen a `.terrasim.json` project.
 - Keep the web/API launch paths out of the desktop entry points.
 
-**Exit gate:** an offscreen Qt smoke test can create the window, navigate pages, and round-trip a project.
+**Exit gate:** passed in an offscreen Qt smoke check: the window constructed, all five pages switched, and model controls/layer references saved to a project file.
 
-### 1. Numerical reference and D-infinity routing — underway
+### 1. Numerical reference and D-infinity routing — reference gate passed
 
 - Keep D∞ separate from the sediment/terrain update: it estimates direction and upslope contributing area from a DEM.
 - State the depression policy explicitly. The current reference leaves flats and depressions terminal; it does not silently fill or breach them.
@@ -32,7 +32,7 @@ Keep the old USPED workflow available as a reference while the paper-aligned mod
 
 **Checks already run:** 13 focused tests passed on single-cell, planar, rectangular-cell, nodata, random-surface, empty-domain, and invalid-input cases. A 64×64 Python reference run took about 0.52 s in the current environment. That is a diagnostic measurement, not a large-raster performance claim.
 
-**Remaining gate:** pass the source nodata value and both cell dimensions through the legacy workflow, then run the saved regression suite from the repository's normal test command.
+**Integration gate:** passed. The legacy workflow now accepts the source nodata value and both cell dimensions, excludes nodata from terrain statistics/derivatives, and passes them to D∞. The saved suite passes with the repository pytest configuration: 14 tests passed, 72% coverage for the focused modules.
 
 ### 2. Paper-aligned Python terrain model — next
 
@@ -111,4 +111,4 @@ If water-flow simulation is later required, specify whether the target is depth-
 
 ## Current status
 
-The Qt shell and project persistence are present. The D∞ reference router passes focused synthetic-grid checks and regression tests are now in the branch. The router remains Python-loop based; no paper-aligned solver has been implemented or connected to the Qt UI. Large-raster runtime, out-of-core processing, and Rust acceleration remain unverified.
+The Qt shell and project persistence pass an offscreen smoke check. The D∞ reference router and its legacy workflow integration pass 14 saved regression tests. The router remains Python-loop based; no paper-aligned solver has been implemented or connected to the Qt UI. Large-raster runtime, out-of-core processing, and Rust acceleration remain unverified.
