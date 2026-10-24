@@ -1,8 +1,6 @@
 """Native TerraSim desktop workbench.
 
-This is the Qt entry point for the desktop-first rebuild. Scientific model
-execution is intentionally kept out of this window until the implementation
-matches the equations and calibration described in the TerraSim paper.
+Scientific models live in backend services; this window handles desktop input, settings, and results.
 """
 from __future__ import annotations
 
@@ -13,6 +11,13 @@ from typing import Any
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
+from backend.services.raster_inputs import (
+    RasterInputError,
+    RasterMetadata,
+    alignment_errors,
+    inspect_geotiff,
+)
+
 from PyQt5.QtWidgets import (
     QAction,
     QApplication,
@@ -222,18 +227,24 @@ class TerraSimDesktop(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
         description = QLabel(
-            "Add spatial inputs to the project. Source files stay at their original paths; "
-            "the project records references to them."
+            "Add GeoTIFF rasters. TerraSim checks spatial metadata before reading pixel data, "
+            "so adding a large file does not load it into memory."
         )
         description.setWordWrap(True)
         description.setObjectName("muted")
         layout.addWidget(description)
 
         actions = QHBoxLayout()
-        add_button = QPushButton("Add files")
+        add_button = QPushButton("Add GeoTIFF")
         add_button.setObjectName("primaryButton")
         add_button.clicked.connect(self._add_data_files)
         actions.addWidget(add_button)
+        self.set_dem_button = QPushButton("Set as DEM")
+        self.set_dem_button.clicked.connect(lambda: self._set_layer_role("elevation"))
+        actions.addWidget(self.set_dem_button)
+        self.set_criterion_button = QPushButton("Set as criterion")
+        self.set_criterion_button.clicked.connect(lambda: self._set_layer_role("criterion"))
+        actions.addWidget(self.set_criterion_button)
         remove_button = QPushButton("Remove selected")
         remove_button.clicked.connect(self._remove_selected_layer)
         actions.addWidget(remove_button)
@@ -242,15 +253,14 @@ class TerraSimDesktop(QMainWindow):
 
         self.layer_list = QListWidget()
         self.layer_list.setObjectName("layerList")
+        self.layer_list.currentRowChanged.connect(self._update_layer_actions)
         layout.addWidget(self.layer_list, 1)
 
-        self.data_hint = QLabel(
-            "Supported inputs: GeoTIFF rasters, common vector GIS files, and CSV tables. "
-            "Coordinate systems and raster alignment need to be checked before modeling."
-        )
+        self.data_hint = QLabel()
         self.data_hint.setWordWrap(True)
         self.data_hint.setObjectName("muted")
         layout.addWidget(self.data_hint)
+        self._refresh_layer_list()
         return page
 
     def _model_page(self) -> QWidget:
@@ -370,19 +380,171 @@ class TerraSimDesktop(QMainWindow):
     def _add_data_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Add spatial input files",
+            "Add elevation or criterion GeoTIFFs",
             "",
-            "Spatial data (*.tif *.tiff *.img *.shp *.gpkg *.geojson *.csv);;All files (*)",
+            "GeoTIFF rasters (*.tif *.tiff);;All files (*)",
         )
         for path in paths:
-            resolved = str(Path(path).resolve())
-            if any(layer["path"] == resolved for layer in self.layers):
-                continue
-            layer = {"path": resolved, "name": Path(resolved).name}
-            self.layers.append(layer)
-            self.layer_list.addItem(layer["name"])
+            self._register_raster_path(path)
         if paths:
-            self.statusBar().showMessage(f"Added {len(paths)} input file(s)", 5000)
+            self.statusBar().showMessage(f"Inspected {len(paths)} raster file(s)", 5000)
+
+    def _register_raster_path(
+        self, path: str, preferred_role: str | None = None
+    ) -> None:
+        resolved = (
+            str(path)
+            if str(path).startswith("/vsi")
+            else str(Path(path).expanduser().resolve())
+        )
+        if any(layer.get("path") == resolved for layer in self.layers):
+            return
+        layer: dict[str, Any] = {
+            "path": resolved,
+            "name": Path(resolved).name,
+            "role": "unassigned",
+            "valid": False,
+        }
+        try:
+            metadata = inspect_geotiff(resolved)
+            role = preferred_role if preferred_role in {"elevation", "criterion"} else None
+            if role is None:
+                role = (
+                    "elevation"
+                    if not any(
+                        item.get("valid") and item.get("role") == "elevation"
+                        for item in self.layers
+                    )
+                    else "criterion"
+                )
+            if role == "elevation":
+                for existing in self.layers:
+                    if existing.get("role") == "elevation":
+                        existing["role"] = "criterion"
+            layer.update(
+                {
+                    "role": role,
+                    "valid": True,
+                    "metadata": {
+                        "width": metadata.width,
+                        "height": metadata.height,
+                        "crs": metadata.crs,
+                        "transform": list(metadata.transform),
+                        "cell_size_x": metadata.cell_size_x,
+                        "cell_size_y": metadata.cell_size_y,
+                        "units": metadata.units,
+                        "nodata": metadata.nodata,
+                        "band": metadata.band,
+                        "dtype": metadata.dtype,
+                    },
+                }
+            )
+        except RasterInputError as exc:
+            layer["error"] = str(exc)
+        self.layers.append(layer)
+        self._refresh_layer_list()
+
+    @staticmethod
+    def _metadata_for_layer(layer: dict[str, Any]) -> RasterMetadata:
+        values = layer["metadata"]
+        return RasterMetadata(
+            path=layer["path"],
+            width=values["width"],
+            height=values["height"],
+            crs=values["crs"],
+            transform=tuple(values["transform"]),
+            cell_size_x=values["cell_size_x"],
+            cell_size_y=values["cell_size_y"],
+            units=values["units"],
+            nodata=values.get("nodata"),
+            band=values.get("band", 1),
+            dtype=values["dtype"],
+        )
+
+    def _refresh_layer_list(self) -> None:
+        if not hasattr(self, "layer_list"):
+            return
+        self.layer_list.clear()
+        dem = next(
+            (
+                layer
+                for layer in self.layers
+                if layer.get("valid") and layer.get("role") == "elevation"
+            ),
+            None,
+        )
+        for layer in self.layers:
+            if not layer.get("valid"):
+                label = f"Needs attention · {layer['name']} · {layer.get('error', 'invalid raster')}"
+            else:
+                metadata = self._metadata_for_layer(layer)
+                role = "DEM" if layer.get("role") == "elevation" else "Criterion"
+                label = (
+                    f"{role} · {layer['name']} · "
+                    f"{metadata.width} × {metadata.height} · "
+                    f"{metadata.cell_size_x:g} × {metadata.cell_size_y:g} m · "
+                    f"{metadata.crs}"
+                )
+                if dem is not None and layer.get("role") == "criterion":
+                    mismatches = alignment_errors(
+                        self._metadata_for_layer(dem), metadata
+                    )
+                    if mismatches:
+                        label += " · not aligned"
+            self.layer_list.addItem(QListWidgetItem(label))
+        self._update_layer_actions()
+
+        if dem is None:
+            self.data_hint.setText(
+                "No DEM assigned. Add a projected metric GeoTIFF and set one raster as the DEM."
+            )
+            return
+        dem_metadata = self._metadata_for_layer(dem)
+        mismatches = []
+        for layer in self.layers:
+            if layer.get("valid") and layer.get("role") == "criterion":
+                issues = alignment_errors(
+                    dem_metadata, self._metadata_for_layer(layer)
+                )
+                if issues:
+                    mismatches.append(f"{layer['name']}: {'; '.join(issues)}")
+        if mismatches:
+            self.data_hint.setText(
+                "DEM metadata is valid, but these criteria need matching CRS, dimensions, "
+                "and pixel alignment before they can be combined: "
+                + " | ".join(mismatches)
+            )
+        else:
+            criterion_count = sum(
+                layer.get("valid") and layer.get("role") == "criterion"
+                for layer in self.layers
+            )
+            self.data_hint.setText(
+                f"DEM ready · {dem_metadata.width} × {dem_metadata.height} cells · "
+                f"{dem_metadata.cell_size_x:g} × {dem_metadata.cell_size_y:g} m · "
+                f"{criterion_count} aligned criterion raster(s). "
+                "Reprojection and resampling are not automatic."
+            )
+
+    def _update_layer_actions(self, *_args: Any) -> None:
+        if not hasattr(self, "layer_list"):
+            return
+        row = self.layer_list.currentRow()
+        selected = 0 <= row < len(self.layers) and self.layers[row].get("valid", False)
+        self.set_dem_button.setEnabled(selected)
+        self.set_criterion_button.setEnabled(selected)
+
+    def _set_layer_role(self, role: str) -> None:
+        row = self.layer_list.currentRow()
+        if not (0 <= row < len(self.layers)) or not self.layers[row].get("valid"):
+            return
+        if role == "elevation":
+            for layer in self.layers:
+                if layer.get("role") == "elevation":
+                    layer["role"] = "criterion"
+        self.layers[row]["role"] = role
+        self._refresh_layer_list()
+        self.layer_list.setCurrentRow(row)
 
     def _remove_selected_layer(self) -> None:
         row = self.layer_list.currentRow()
@@ -390,6 +552,7 @@ class TerraSimDesktop(QMainWindow):
             return
         self.layer_list.takeItem(row)
         del self.layers[row]
+        self._refresh_layer_list()
 
     def _new_project(self) -> None:
         self.project_path = None
@@ -398,6 +561,7 @@ class TerraSimDesktop(QMainWindow):
         self.alpha_control.set_multiplier(1.0)
         self.beta_control.set_multiplier(1.0)
         self.project_label.setText("Untitled project")
+        self._refresh_layer_list()
         self.statusBar().showMessage("New project", 3000)
 
     def _open_project(self) -> None:
@@ -408,17 +572,22 @@ class TerraSimDesktop(QMainWindow):
             return
         try:
             payload = json.loads(Path(path).read_text(encoding="utf-8"))
-            self.layers = list(payload.get("layers", []))
+            saved_layers = list(payload.get("layers", []))
+            self.layers.clear()
             self.layer_list.clear()
-            for layer in self.layers:
-                self.layer_list.addItem(layer.get("name", Path(layer["path"]).name))
+            for layer in saved_layers:
+                if layer.get("path"):
+                    self._register_raster_path(
+                        layer["path"], preferred_role=layer.get("role")
+                    )
             controls = payload.get("model_controls", {})
             if isinstance(controls, dict):
                 self.alpha_control.set_multiplier(controls.get("alpha_multiplier", 1.0))
                 self.beta_control.set_multiplier(controls.get("beta_multiplier", 1.0))
             self.project_path = Path(path)
             self.project_label.setText(self.project_path.name)
-            self.statusBar().showMessage("Project opened", 5000)
+            self._refresh_layer_list()
+            self.statusBar().showMessage("Project opened and raster metadata refreshed", 5000)
         except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
             QMessageBox.critical(self, "Could not open project", str(exc))
 
@@ -434,7 +603,7 @@ class TerraSimDesktop(QMainWindow):
             path += ".terrasim.json"
         payload = {
             "format": "terrasim-project",
-            "version": 1,
+            "version": 2,
             "layers": self.layers,
             "model_controls": {
                 "alpha_multiplier": self.alpha_control.multiplier,
@@ -507,3 +676,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
