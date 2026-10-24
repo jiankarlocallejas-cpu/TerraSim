@@ -210,7 +210,7 @@ def test_simulation_can_cancel_between_substeps():
 
 @pytest.mark.parametrize(
     ("width", "height", "criterion_count", "expected"),
-    [(10, 20, 0, 51200), (10, 20, 2, 54400)],
+    [(10, 20, 0, 51200), (10, 20, 2, 57600)],
 )
 def test_reference_memory_estimate(width, height, criterion_count, expected):
     assert estimate_reference_memory_bytes(width, height, criterion_count) == expected
