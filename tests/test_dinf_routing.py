@@ -1,8 +1,9 @@
-"""Regression tests for the D-infinity reference router."""
+"""Regression tests for the D-infinity reference router and workflow."""
 import numpy as np
 import pytest
 
 from backend.services.dinf_routing import route_dinf
+from backend.services.usped_workflow import USPEDWorkflow
 
 
 def test_single_cell_uses_physical_cell_area_and_is_terminal():
@@ -81,3 +82,29 @@ def test_empty_valid_domain_returns_empty_masks_and_zero_area():
     assert not result.terminal_mask.any()
     assert not result.contributing_area.any()
     assert np.isnan(result.flow_direction).all()
+
+
+def test_usped_workflow_passes_nodata_and_cell_dimensions_to_routing():
+    rows, cols = np.mgrid[0:7, 0:7]
+    elevation = 100.0 - 2.0 * cols + rows
+    elevation = elevation.astype(float)
+    elevation[3, 3] = -9999.0
+    workflow = USPEDWorkflow(
+        elevation, cell_size=2.0, cell_size_y=3.0, nodata=-9999.0
+    )
+
+    loaded = workflow.step_1_load_data()
+    workflow.step_2_compute_slope()
+    workflow.step_3_compute_aspect()
+    flow = workflow.step_4_compute_flow_accumulation()
+
+    assert loaded["min_elev"] > -9999.0
+    assert np.isnan(workflow.slope[3, 3])
+    assert np.isnan(workflow.aspect[3, 3])
+    assert np.isnan(workflow.slope[2:5, 2:5]).all()
+    assert flow["terminal_cells"] > 0
+    assert workflow.flow_accum[3, 3] == 0.0
+    terminal_area = workflow.flow_accum[
+        workflow.results["routing_terminal_mask"]
+    ].sum()
+    assert terminal_area == pytest.approx(48 * 6.0)
