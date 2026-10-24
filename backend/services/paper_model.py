@@ -92,6 +92,26 @@ def weighted_susceptibility_index(
     return index
 
 
+def estimate_reference_memory_bytes(
+    width: int,
+    height: int,
+    criterion_count: int = 0,
+) -> int:
+    """Estimate Python reference peak working memory for preflight checks.
+
+    The estimate reserves 256 bytes per DEM cell for solver arrays, plus 8
+    bytes per cell for each criterion array. It is deliberately approximate;
+    it is not a guarantee of available system memory.
+    """
+    if not isinstance(width, int) or width <= 0:
+        raise ValueError("width must be a positive integer")
+    if not isinstance(height, int) or height <= 0:
+        raise ValueError("height must be a positive integer")
+    if not isinstance(criterion_count, int) or criterion_count < 0:
+        raise ValueError("criterion_count must be a non-negative integer")
+    return width * height * (256 + 8 * criterion_count)
+
+
 class ExnerTerrainModel:
     """Small-grid reference for the paper's sediment-flux/Exner terrain update.
 
@@ -401,5 +421,6 @@ class ExnerTerrainModel:
             max_abs_step_change=max_abs_step_change,
             cancelled=was_cancelled,
         )
+
 
 
