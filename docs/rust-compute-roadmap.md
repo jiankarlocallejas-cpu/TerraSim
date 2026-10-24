@@ -68,9 +68,11 @@ Do not invent calibrated coefficients. The paper does not provide enough calibra
 - Summarize run diagnostics and export final elevation and susceptibility rasters.
 - Keep a run's input and coefficient provenance available for later review.
 
-**Checks run:** the Qt worker loads synthetic aligned GeoTIFFs, calculates a weighted MCE layer, advances the DEM with the Exner reference, updates the Results page, and exports both outputs with source CRS, transform, and dimensions. A second offscreen Qt check requests cancellation by closing the application during a worker run and confirms that the window waits for the worker to stop before destroying its thread. The full suite passes 51 tests; backend-focused coverage is 81%.
+**Checks run:** the Qt worker loads synthetic aligned GeoTIFFs, calculates a weighted MCE layer, advances the DEM with the Exner reference, updates the Results page, and exports both outputs with source CRS, transform, and dimensions. A second offscreen Qt check requests cancellation by closing the application during a worker run and confirms that the window waits for the worker to stop before destroying its thread. With the Rust extension installed, the Windows CI run passes 58 Python/Qt tests and 3 pure Rust tests.
 
-**Remaining gate:** write and reopen a run manifest/result record, retain calibration provenance with each run, and add a spatial preview. Scenarios remains a placeholder. These are distinct from the already working Run/export path.
+**Saved-run gate:** passed. The Results page writes and reopens a versioned `.terrasim-run.json` file containing source paths and raster metadata, actual coefficients and slider multipliers, run diagnostics, coefficient-provenance notes, and exported output paths. The write is atomic. Reopening restores the report but does not reload raster arrays; the record is deliberately small and references output files by path.
+
+**Remaining gate:** add a spatial preview. Scenarios remains a placeholder.
 
 ### 5. Profile and bound memory — initial diagnostic complete
 
@@ -86,14 +88,24 @@ Next:
 
 **Exit gate:** tile and full-grid runs agree within a documented tolerance and pass the same conservation checks.
 
-### 6. Migrate measured hotspots to Rust
+### 6. Migrate measured hotspots to Rust — first kernel gate passed; migration continues
 
-- Profile the reference solver first; choose the hottest deterministic kernels.
-- Add a typed PyO3/maturin extension while retaining a Python fallback.
-- Port one kernel at a time and compare directions, fluxes, elevation change, mass balance, runtime, and peak memory.
-- Keep precision changes opt-in until their error is measured.
+The first profiled hotspot was the per-step sediment-flux evaluation. The optional PyO3/maturin extension now computes flux divergence and the corresponding explicit stability bound in one Rust call over the whole grid. The Python reference remains the fallback and comparison implementation.
 
-**Exit gate:** Rust matches the reference on edge, nodata, flat, tile-boundary, and stress cases, and improves measured runtime or memory.
+**Implemented and verified:**
+
+- The native Windows extension builds and installs on CI; the dependency-free Rust core has 3 passing unit tests for flat grids, nodata holes, and invalid shapes/tensors.
+- The Rust evaluator matches the Python reference on anisotropic cells, a non-diagonal diffusion tensor, and a nodata hole. The full run uses identical timesteps and mass balance; the 1024×1024 output difference was exactly 0.0.
+- On the Windows Server 2025 / Python 3.12 CI runner, a synthetic 1024×1024, 10-step case took 1.589 s with Python and 0.527 s with Rust (3.01× faster). This is one controlled benchmark, not a cross-machine or large-raster guarantee. See the [verification run](https://github.com/jiankarlocallejas-cpu/TerraSim/actions/runs/40087726215).
+
+**Remaining work:**
+
+- Profile the next hotspots and migrate only kernels that improve measured run time or peak memory.
+- Reduce avoidable full-grid copies across the Python/Rust boundary and measure peak working set, not runtime alone.
+- Keep the Python reference callable for parity checks; keep precision changes opt-in until their error is measured.
+- Tiled execution remains Stage 5 work; test tile-edge flux and whole-grid equivalence before making it a Rust kernel requirement.
+
+**First-kernel exit gate:** passed for reference parity and measured runtime on the tested grid. The broader Rust migration remains in progress.
 
 ### 7. Package and document
 
@@ -121,6 +133,6 @@ If water-flow simulation is later required, specify whether the target is depth-
 
 ## Current status
 
-The Qt desktop workflow now runs the Python reference model on a background worker, reports progress, supports checkpoint cancellation, estimates memory before raster loading, and exports final elevation and susceptibility GeoTIFFs. An offscreen end-to-end check covers run, results summary, close-during-run cancellation, and both exports. The current full suite passes 51 tests; backend-focused coverage is 81%.
+The Qt desktop workflow runs the Python reference model on a background worker, reports progress, supports checkpoint cancellation, estimates memory before raster loading, and exports final elevation and susceptibility GeoTIFFs. The Results page also saves and reopens a versioned run record with input metadata, coefficients, diagnostics, provenance, and output paths. An offscreen end-to-end check covers run, exports, run-record round-trip, and close-during-run cancellation.
 
-Initial one-step memory and runtime diagnostics are recorded in Stage 5. Multi-step profiling, realistic large-raster benchmarks, windowed/tiled processing, saved-run manifests and reload, spatial previews, scenario comparison, and Rust acceleration remain future gates. The Scenarios page is still a placeholder. TerraSim is a terrain/sediment evolution model, not a fluid solver or CFD application.
+The Rust-enabled Windows CI run builds the extension, passes 3 Rust core tests and 58 Python/Qt tests, and verifies an exact Python/Rust full-run output match. The measured 1024×1024, 10-step case ran 3.01× faster with Rust on that runner. Large realistic raster benchmarks, memory-copy reduction, windowed/tiled processing, spatial previews, scenario comparison, and packaging remain future gates. The Scenarios page is still a placeholder. TerraSim is a terrain/sediment evolution model, not a fluid solver or CFD application.
