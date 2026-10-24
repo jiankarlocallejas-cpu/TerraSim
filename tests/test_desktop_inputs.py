@@ -52,7 +52,16 @@ def test_input_page_inspects_alignment_and_project_round_trip(app, tmp_path, mon
 
     window.layer_list.setCurrentRow(1)
     window._set_layer_role("elevation")
+    assert window.layers[1]["role"] == "elevation"
+    assert window.layers[1]["weight"] == 0.0
+    assert window.layers[0]["role"] == "criterion"
+    window.layer_list.setCurrentRow(0)
+    window.criterion_weight_control.setValue(1.0)
     window.alpha_control.set_multiplier(1.4)
+    window.alpha_base_spin.setValue(0.125)
+    window.beta_base_spin.setValue(0.025)
+    window.total_time_spin.setValue(3.0)
+
     project_path = tmp_path / "sample.terrasim.json"
     window.project_path = project_path
     window._save_project()
@@ -68,7 +77,11 @@ def test_input_page_inspects_alignment_and_project_round_trip(app, tmp_path, mon
 
     assert reopened.layers[1]["role"] == "elevation"
     assert reopened.layers[0]["role"] == "criterion"
+    assert reopened.layers[0]["weight"] == pytest.approx(1.0)
     assert reopened.alpha_control.multiplier == pytest.approx(1.4)
+    assert reopened.alpha_base_spin.value() == pytest.approx(0.125)
+    assert reopened.beta_base_spin.value() == pytest.approx(0.025)
+    assert reopened.total_time_spin.value() == pytest.approx(3.0)
     assert reopened.layers[1]["metadata"]["crs"] == "EPSG:32650"
     reopened.close()
     app.processEvents()
