@@ -12,7 +12,7 @@ if not exist "desktop\main.py" (
 python -c "import PyQt5" >nul 2>&1
 if errorlevel 1 (
     echo PyQt5 is not installed.
-    echo Install the desktop dependencies with: python -m pip install -r requirements.txt
+    echo Install the desktop dependencies with: python -m pip install -r requirements-desktop.txt
     exit /b 1
 )
 
