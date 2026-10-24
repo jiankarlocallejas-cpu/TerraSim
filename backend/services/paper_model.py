@@ -37,6 +37,7 @@ class ExnerSimulation:
     mass_before: float
     mass_after: float
     max_abs_step_change: float
+    cancelled: bool = False
 
 
 def weighted_susceptibility_index(
@@ -332,6 +333,7 @@ class ExnerTerrainModel:
         max_timestep: float,
         valid_mask: Optional[np.ndarray] = None,
         progress: Optional[Callable[[int, float, float], None]] = None,
+        cancel_requested: Optional[Callable[[], bool]] = None,
         max_steps: int = 1_000_000,
     ) -> ExnerSimulation:
         """Evolve terrain without retaining intermediate grids in memory.
@@ -352,10 +354,14 @@ class ExnerTerrainModel:
         mass_before = self._mass(grid, valid, cell_area)
         elapsed = 0.0
         step_count = 0
+        was_cancelled = False
         min_stable_timestep = math.inf
         max_abs_step_change = 0.0
 
         while elapsed < total_time:
+            if cancel_requested is not None and cancel_requested():
+                was_cancelled = True
+                break
             if step_count >= max_steps:
                 raise RuntimeError("simulation exceeded max_steps before reaching total_time")
             divergence, stable_timestep = self._evaluate(grid, valid)
@@ -393,5 +399,7 @@ class ExnerTerrainModel:
             mass_before=mass_before,
             mass_after=self._mass(grid, valid, cell_area),
             max_abs_step_change=max_abs_step_change,
+            cancelled=was_cancelled,
         )
+
 
