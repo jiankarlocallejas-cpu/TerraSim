@@ -55,6 +55,21 @@ def test_qt_runs_in_background_and_exports_geotiffs(app, tmp_path, monkeypatch, 
     window.max_timestep_spin.setValue(0.1)
     window.alpha_base_spin.setValue(0.01)
     window.beta_base_spin.setValue(0.01)
+    import desktop.main as desktop_main
+
+    monkeypatch.setattr(
+        desktop_main,
+        "estimate_reference_memory_bytes",
+        lambda *_args, **_kwargs: 600 * 2**20,
+    )
+    monkeypatch.setattr(
+        desktop_main,
+        "estimate_tiled_memory_bytes",
+        lambda *_args, tile_shape, **_kwargs: (
+            700 if tile_shape == (1024, 1024) else
+            400 if tile_shape == (512, 512) else 100
+        ) * 2**20,
+    )
 
     window._start_simulation()
     assert window._simulation_thread is not None
@@ -79,6 +94,7 @@ def test_qt_runs_in_background_and_exports_geotiffs(app, tmp_path, monkeypatch, 
     assert window._last_result is not None
     assert window._last_result.simulation.elapsed_time == pytest.approx(0.2)
     assert window._last_result.criterion_count == 1
+    assert window._last_result.model_settings["compute_mode"] == "tiled-512x512"
     assert window.pages.currentIndex() == 4
     assert "Completed" in window.results_summary.text()
     assert not window.elevation_preview_image.pixmap().isNull()
@@ -125,6 +141,7 @@ def test_qt_runs_in_background_and_exports_geotiffs(app, tmp_path, monkeypatch, 
     assert manifest["inputs"][0]["metadata"]["crs"] == "EPSG:32650"
     assert manifest["model_settings"]["alpha"] == pytest.approx(0.01)
     assert manifest["model_settings"]["alpha_multiplier"] == pytest.approx(1.0)
+    assert manifest["model_settings"]["compute_mode"] == "tiled-512x512"
     assert manifest["diagnostics"]["status"] == "completed"
     assert manifest["diagnostics"]["step_count"] > 0
     assert manifest["outputs"]["elevation"] == str(elevation_output)
@@ -205,3 +222,4 @@ def test_closing_during_run_cancels_and_waits_for_worker(app, tmp_path, monkeypa
     assert cancelled == [True]
     assert window._simulation_thread is None
     assert not window.isVisible()
+

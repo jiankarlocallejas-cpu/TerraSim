@@ -61,6 +61,9 @@ def test_input_page_inspects_alignment_and_project_round_trip(app, tmp_path, mon
     window.alpha_base_spin.setValue(0.125)
     window.beta_base_spin.setValue(0.025)
     window.total_time_spin.setValue(3.0)
+    window.compute_mode_combo.setCurrentIndex(
+        window.compute_mode_combo.findData(512)
+    )
 
     project_path = tmp_path / "sample.terrasim.json"
     window.project_path = project_path
@@ -82,6 +85,7 @@ def test_input_page_inspects_alignment_and_project_round_trip(app, tmp_path, mon
     assert reopened.alpha_base_spin.value() == pytest.approx(0.125)
     assert reopened.beta_base_spin.value() == pytest.approx(0.025)
     assert reopened.total_time_spin.value() == pytest.approx(3.0)
+    assert reopened.compute_mode_combo.currentData() == 512
     assert reopened.layers[1]["metadata"]["crs"] == "EPSG:32650"
     reopened.close()
     app.processEvents()

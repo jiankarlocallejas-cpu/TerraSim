@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Callable, Mapping, Optional, Tuple
+from typing import Callable, Iterator, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -116,6 +116,43 @@ def estimate_reference_memory_bytes(
     if not isinstance(criterion_count, int) or criterion_count < 0:
         raise ValueError("criterion_count must be a non-negative integer")
     return width * height * (256 + 16 * criterion_count)
+
+
+def estimate_tiled_memory_bytes(
+    width: int,
+    height: int,
+    criterion_count: int = 0,
+    tile_shape: Tuple[int, int] = (512, 512),
+) -> int:
+    """Estimate working memory for the tiled Python reference path.
+
+    Full-grid inputs, outputs, and masks are reserved at 64 bytes per cell plus
+    16 bytes per criterion. The two-cell-halo tile workspace reserves 256 bytes
+    per expanded tile cell. Like the full-grid estimate, this is approximate.
+    """
+    if not isinstance(width, int) or width <= 0:
+        raise ValueError("width must be a positive integer")
+    if not isinstance(height, int) or height <= 0:
+        raise ValueError("height must be a positive integer")
+    if not isinstance(criterion_count, int) or criterion_count < 0:
+        raise ValueError("criterion_count must be a non-negative integer")
+    if (
+        not isinstance(tile_shape, (tuple, list))
+        or len(tile_shape) != 2
+        or any(
+            not isinstance(length, int)
+            or isinstance(length, bool)
+            or length <= 0
+            for length in tile_shape
+        )
+    ):
+        raise ValueError("tile_shape must contain two positive integers")
+
+    tile_height = min(height, tile_shape[0]) + 4
+    tile_width = min(width, tile_shape[1]) + 4
+    full_grid_bytes = width * height * (64 + 16 * criterion_count)
+    tile_workspace_bytes = tile_height * tile_width * 256
+    return full_grid_bytes + tile_workspace_bytes
 
 
 class ExnerTerrainModel:
@@ -236,9 +273,11 @@ class ExnerTerrainModel:
         self,
         grid: np.ndarray,
         valid: np.ndarray,
+        bound_mask: Optional[np.ndarray] = None,
+        rate_components: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, float]:
         """Return flux divergence and a conservative explicit timestep bound."""
-        if _rust_evaluate_flux_divergence is not None:
+        if _rust_evaluate_flux_divergence is not None and bound_mask is None:
             divergence, stable_timestep = _rust_evaluate_flux_divergence(
                 grid,
                 valid,
@@ -255,6 +294,24 @@ class ExnerTerrainModel:
             if not np.all(np.isfinite(divergence[valid])):
                 raise FloatingPointError("non-finite sediment-flux divergence")
             return divergence, float(stable_timestep)
+
+        return self._evaluate_python(grid, valid, bound_mask, rate_components)
+
+    def _evaluate_python(
+        self,
+        grid: np.ndarray,
+        valid: np.ndarray,
+        bound_mask: Optional[np.ndarray] = None,
+        rate_components: Optional[np.ndarray] = None,
+    ) -> Tuple[np.ndarray, float]:
+        """Python kernel with an optional mask for the stability reduction."""
+        if bound_mask is None:
+            bound_valid = valid
+        else:
+            supplied_bound_mask = np.asarray(bound_mask, dtype=bool)
+            if supplied_bound_mask.shape != grid.shape:
+                raise ValueError("bound_mask shape must match the evaluation grid")
+            bound_valid = valid & supplied_bound_mask
 
         dz_dx = self._gradient(grid, valid, axis=1, spacing=self.cell_size_x, coordinate_sign=1.0)
         # Raster rows point south, while the model's y coordinate points north.
@@ -306,15 +363,23 @@ class ExnerTerrainModel:
         jac_xy = capacity * self.diffusion_tensor[0, 1] + (
             2.0 * self.alpha * active_float * tensor_grad_x * tensor_grad_y
         )
-        if np.any(valid):
-            rate_bound = 2.0 * (
-                float(np.max(jac_xx[valid])) / self.cell_size_x**2
-                + float(np.max(jac_yy[valid])) / self.cell_size_y**2
-                + float(np.max(np.abs(jac_xy[valid]))
-                        / (self.cell_size_x * self.cell_size_y))
-            )
+        if np.any(bound_valid):
+            max_jac_xx = float(np.max(jac_xx[bound_valid]))
+            max_jac_yy = float(np.max(jac_yy[bound_valid]))
+            max_abs_jac_xy = float(np.max(np.abs(jac_xy[bound_valid])))
         else:
-            rate_bound = 0.0
+            max_jac_xx = 0.0
+            max_jac_yy = 0.0
+            max_abs_jac_xy = 0.0
+        if rate_components is not None:
+            if rate_components.shape != (3,):
+                raise ValueError("rate_components must have length three")
+            rate_components[:] = (max_jac_xx, max_jac_yy, max_abs_jac_xy)
+        rate_bound = 2.0 * (
+            max_jac_xx / self.cell_size_x**2
+            + max_jac_yy / self.cell_size_y**2
+            + max_abs_jac_xy / (self.cell_size_x * self.cell_size_y)
+        )
         stable_timestep = self.cfl / rate_bound if rate_bound > 0.0 else math.inf
 
         if not np.all(np.isfinite(divergence[valid])):
@@ -379,6 +444,7 @@ class ExnerTerrainModel:
         progress: Optional[Callable[[int, float, float], None]] = None,
         cancel_requested: Optional[Callable[[], bool]] = None,
         max_steps: int = 1_000_000,
+        tile_shape: Optional[Tuple[int, int]] = None,
     ) -> ExnerSimulation:
         """Evolve terrain without retaining intermediate grids in memory.
 
@@ -394,6 +460,18 @@ class ExnerTerrainModel:
             raise ValueError("max_steps must be a positive integer")
 
         grid, valid = self._prepare_grid(elevation, valid_mask)
+        if tile_shape is not None:
+            return self._simulate_tiled(
+                grid,
+                valid,
+                total_time,
+                max_timestep,
+                tile_shape,
+                progress,
+                cancel_requested,
+                max_steps,
+            )
+
         cell_area = self.cell_size_x * self.cell_size_y
         mass_before = self._mass(grid, valid, cell_area)
         elapsed = 0.0
@@ -467,8 +545,185 @@ class ExnerTerrainModel:
             cancelled=was_cancelled,
         )
 
+    @staticmethod
+    def _iter_tile_windows(
+        grid_shape: Tuple[int, int],
+        tile_shape: Tuple[int, int],
+        halo: int = 2,
+    ) -> Iterator[
+        Tuple[
+            Tuple[slice, slice],
+            Tuple[slice, slice],
+            Tuple[slice, slice],
+        ]
+    ]:
+        """Yield core, expanded, and core-in-expanded slices for a stencil tile."""
+        rows, cols = grid_shape
+        tile_rows, tile_cols = tile_shape
+        for row_start in range(0, rows, tile_rows):
+            row_stop = min(row_start + tile_rows, rows)
+            expanded_row_start = max(0, row_start - halo)
+            expanded_row_stop = min(rows, row_stop + halo)
+            for col_start in range(0, cols, tile_cols):
+                col_stop = min(col_start + tile_cols, cols)
+                expanded_col_start = max(0, col_start - halo)
+                expanded_col_stop = min(cols, col_stop + halo)
+                core = (slice(row_start, row_stop), slice(col_start, col_stop))
+                expanded = (
+                    slice(expanded_row_start, expanded_row_stop),
+                    slice(expanded_col_start, expanded_col_stop),
+                )
+                local_core = (
+                    slice(row_start - expanded_row_start, row_stop - expanded_row_start),
+                    slice(col_start - expanded_col_start, col_stop - expanded_col_start),
+                )
+                yield core, expanded, local_core
 
+    def _simulate_tiled(
+        self,
+        grid: np.ndarray,
+        valid: np.ndarray,
+        total_time: float,
+        max_timestep: float,
+        tile_shape: Tuple[int, int],
+        progress: Optional[Callable[[int, float, float], None]],
+        cancel_requested: Optional[Callable[[], bool]],
+        max_steps: int,
+    ) -> ExnerSimulation:
+        """Run the reference kernel on two-cell-halo windows.
 
+        A first pass reduces the stability bound over core cells. A second pass
+        reevaluates each window and writes its core to the next grid, keeping the
+        large stencil work arrays tile-sized rather than raster-sized.
+        """
+        if (
+            not isinstance(tile_shape, (tuple, list))
+            or len(tile_shape) != 2
+            or any(
+                not isinstance(length, int)
+                or isinstance(length, bool)
+                or length <= 0
+                for length in tile_shape
+            )
+        ):
+            raise ValueError("tile_shape must contain two positive integers")
+        tile_shape = (tile_shape[0], tile_shape[1])
 
+        cell_area = self.cell_size_x * self.cell_size_y
+        mass_before = self._mass(grid, valid, cell_area)
+        next_grid = grid.copy()
+        elapsed = 0.0
+        step_count = 0
+        was_cancelled = False
+        min_stable_timestep = math.inf
+        max_abs_step_change = 0.0
+
+        while elapsed < total_time:
+            if cancel_requested is not None and cancel_requested():
+                was_cancelled = True
+                break
+            if step_count >= max_steps:
+                raise RuntimeError("simulation exceeded max_steps before reaching total_time")
+
+            global_rate_components = np.zeros(3, dtype=np.float64)
+            tile_rate_components = np.empty(3, dtype=np.float64)
+            for _, expanded, local_core in self._iter_tile_windows(
+                grid.shape, tile_shape
+            ):
+                if cancel_requested is not None and cancel_requested():
+                    was_cancelled = True
+                    break
+                tile_grid = grid[expanded]
+                tile_valid = valid[expanded]
+                core_mask = np.zeros(tile_grid.shape, dtype=bool)
+                core_mask[local_core] = True
+                self._evaluate(
+                    tile_grid,
+                    tile_valid,
+                    bound_mask=core_mask,
+                    rate_components=tile_rate_components,
+                )
+                np.maximum(
+                    global_rate_components,
+                    tile_rate_components,
+                    out=global_rate_components,
+                )
+            if was_cancelled:
+                break
+
+            rate_bound = 2.0 * (
+                global_rate_components[0] / self.cell_size_x**2
+                + global_rate_components[1] / self.cell_size_y**2
+                + global_rate_components[2]
+                / (self.cell_size_x * self.cell_size_y)
+            )
+            stable_timestep = (
+                self.cfl / rate_bound if rate_bound > 0.0 else math.inf
+            )
+            step_size = min(max_timestep, stable_timestep, total_time - elapsed)
+            if not math.isfinite(step_size) or step_size <= 0.0:
+                raise FloatingPointError("no positive finite timestep is available")
+
+            step_change = 0.0
+            for core, expanded, local_core in self._iter_tile_windows(
+                grid.shape, tile_shape
+            ):
+                if cancel_requested is not None and cancel_requested():
+                    was_cancelled = True
+                    break
+                tile_grid = grid[expanded]
+                tile_valid = valid[expanded]
+                core_mask = np.zeros(tile_grid.shape, dtype=bool)
+                core_mask[local_core] = True
+                divergence, _ = self._evaluate(
+                    tile_grid, tile_valid, bound_mask=core_mask
+                )
+                current_core = grid[core]
+                valid_core = valid[core]
+                next_core = next_grid[core]
+                core_divergence = divergence[local_core]
+                next_core[valid_core] = (
+                    current_core[valid_core]
+                    - step_size * core_divergence[valid_core]
+                )
+                if not np.all(np.isfinite(next_core[valid_core])):
+                    raise FloatingPointError(
+                        "terrain update produced non-finite elevations"
+                    )
+                if np.any(valid_core):
+                    tile_change = float(
+                        np.max(
+                            np.abs(next_core[valid_core] - current_core[valid_core])
+                        )
+                    )
+                    step_change = max(step_change, tile_change)
+            if was_cancelled:
+                break
+
+            max_abs_step_change = max(max_abs_step_change, step_change)
+            grid, next_grid = next_grid, grid
+            step_count += 1
+            min_stable_timestep = min(min_stable_timestep, stable_timestep)
+            if step_size == total_time - elapsed:
+                elapsed = total_time
+            else:
+                next_elapsed = elapsed + step_size
+                if next_elapsed <= elapsed:
+                    raise FloatingPointError("timestep is too small to advance simulation time")
+                elapsed = next_elapsed
+            if progress is not None:
+                progress(step_count, elapsed, step_size)
+
+        return ExnerSimulation(
+            elevation=grid,
+            valid_mask=valid,
+            elapsed_time=elapsed,
+            step_count=step_count,
+            min_stable_timestep=min_stable_timestep,
+            mass_before=mass_before,
+            mass_after=self._mass(grid, valid, cell_area),
+            max_abs_step_change=max_abs_step_change,
+            cancelled=was_cancelled,
+        )
 
 

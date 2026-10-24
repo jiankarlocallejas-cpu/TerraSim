@@ -5,6 +5,7 @@ import pytest
 from backend.services.paper_model import (
     ExnerTerrainModel,
     estimate_reference_memory_bytes,
+    estimate_tiled_memory_bytes,
     weighted_susceptibility_index,
 )
 
@@ -126,6 +127,83 @@ def test_simulation_in_place_updates_match_explicit_steps_and_preserve_inputs():
     assert np.isnan(result.elevation[8, 7])
     assert result.elevation[1, 1] == original[1, 1]
     assert result.mass_after == pytest.approx(result.mass_before, abs=1e-10)
+
+
+@pytest.mark.parametrize("tile_shape", [(3, 4), (5, 7), (32, 32)])
+def test_tiled_simulation_matches_full_grid_across_halos_and_nodata(tile_shape):
+    model = make_model(nodata=-9999.0)
+    rng = np.random.default_rng(23)
+    elevation = rng.normal(size=(12, 13))
+    elevation[2, 3] = -9999.0
+    elevation[9, 8] = np.nan
+    valid_mask = np.ones(elevation.shape, dtype=bool)
+    valid_mask[0, 0] = False
+    original = elevation.copy()
+    settings = {
+        "total_time": 0.08,
+        "max_timestep": 0.02,
+        "valid_mask": valid_mask,
+    }
+
+    full = model.simulate(elevation, **settings)
+    tiled = model.simulate(elevation, tile_shape=tile_shape, **settings)
+
+    assert tiled.step_count == full.step_count
+    assert tiled.elapsed_time == full.elapsed_time
+    assert tiled.min_stable_timestep == pytest.approx(full.min_stable_timestep)
+    assert tiled.mass_after == pytest.approx(tiled.mass_before, abs=1e-10)
+    assert tiled.max_abs_step_change == pytest.approx(
+        full.max_abs_step_change, rel=1e-12, abs=1e-12
+    )
+    np.testing.assert_allclose(
+        tiled.elevation, full.elevation, rtol=1e-12, atol=1e-12, equal_nan=True
+    )
+    np.testing.assert_allclose(
+        elevation, original, rtol=0.0, atol=0.0, equal_nan=True
+    )
+
+
+def test_tiled_simulation_can_cancel_between_tiles_without_partial_step():
+    model = make_model()
+    elevation = np.arange(25, dtype=float).reshape(5, 5)
+    progress = []
+    cancel_calls = 0
+
+    def cancel_after_one_completed_step():
+        nonlocal cancel_calls
+        cancel_calls += 1
+        return cancel_calls >= 31
+
+    result = model.simulate(
+        elevation,
+        total_time=1.0,
+        max_timestep=0.1,
+        tile_shape=(2, 2),
+        progress=lambda steps, elapsed, dt: progress.append((steps, elapsed, dt)),
+        cancel_requested=cancel_after_one_completed_step,
+    )
+
+    assert result.cancelled
+    assert result.step_count == 1
+    assert len(progress) == 1
+    expected = model.step(elevation, timestep=progress[0][2]).elevation
+    np.testing.assert_allclose(
+        result.elevation, expected, rtol=1e-12, atol=1e-12
+    )
+
+
+@pytest.mark.parametrize("tile_shape", [(0, 1), (1, 0), (1,), (1.5, 2)])
+def test_tiled_simulation_rejects_invalid_tile_shapes(tile_shape):
+    model = make_model()
+    elevation = np.zeros((3, 4), dtype=float)
+
+    with pytest.raises(ValueError, match="tile_shape"):
+        model.simulate(
+            elevation,
+            total_time=0.1,
+            max_timestep=0.1,
+            tile_shape=tile_shape,
+        )
 
 
 def test_alpha_threshold_and_beta_control_transport_response():
@@ -259,6 +337,36 @@ def test_reference_memory_estimate(width, height, criterion_count, expected):
 
 
 @pytest.mark.parametrize(
+    ("width", "height", "criterion_count", "tile_shape", "expected"),
+    [
+        (1024, 1024, 0, (512, 512), 135270400),
+        (10, 20, 2, (512, 512), 105216),
+    ],
+)
+def test_tiled_memory_estimate(width, height, criterion_count, tile_shape, expected):
+    assert estimate_tiled_memory_bytes(
+        width, height, criterion_count, tile_shape
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "criterion_count", "tile_shape"),
+    [
+        (0, 1, 0, (1, 1)),
+        (1, 0, 0, (1, 1)),
+        (1, 1, -1, (1, 1)),
+        (1, 1, 0, (0, 1)),
+        (1, 1, 0, (1,)),
+    ],
+)
+def test_tiled_memory_estimate_rejects_invalid_dimensions(
+    width, height, criterion_count, tile_shape
+):
+    with pytest.raises(ValueError):
+        estimate_tiled_memory_bytes(width, height, criterion_count, tile_shape)
+
+
+@pytest.mark.parametrize(
     ("width", "height", "criterion_count"),
     [(0, 1, 0), (1, 0, 0), (1, 1, -1)],
 )
@@ -267,4 +375,5 @@ def test_reference_memory_estimate_rejects_invalid_dimensions(
 ):
     with pytest.raises(ValueError):
         estimate_reference_memory_bytes(width, height, criterion_count)
+
 

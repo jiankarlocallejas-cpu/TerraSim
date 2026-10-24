@@ -11,6 +11,7 @@ from backend.services.paper_model import (
     ExnerSimulation,
     ExnerTerrainModel,
     estimate_reference_memory_bytes,
+    estimate_tiled_memory_bytes,
     weighted_susceptibility_index,
 )
 from backend.services.raster_inputs import (
@@ -28,7 +29,7 @@ class DesktopSimulationResult:
     susceptibility_index: Optional[np.ndarray]
     estimated_memory_bytes: int
     criterion_count: int
-    model_settings: dict[str, float]
+    model_settings: dict[str, Any]
     input_layers: list[dict[str, Any]]
     elevation_preview: RasterPreview
     susceptibility_preview: RasterPreview | None
@@ -47,8 +48,9 @@ class SimulationWorker(QObject):
         self,
         dem_layer: dict[str, Any],
         criterion_layers: list[dict[str, Any]],
-        model_settings: dict[str, float],
+        model_settings: dict[str, Any],
         memory_budget_bytes: int,
+        tile_shape: Optional[tuple[int, int]] = None,
     ) -> None:
         super().__init__()
         self.dem_layer = dict(dem_layer)
@@ -60,6 +62,7 @@ class SimulationWorker(QObject):
             self.criterion_layers.append(snapshot)
         self.model_settings = dict(model_settings)
         self.memory_budget_bytes = memory_budget_bytes
+        self.tile_shape = tile_shape
 
     def _is_cancelled(self) -> bool:
         return QThread.currentThread().isInterruptionRequested()
@@ -74,11 +77,19 @@ class SimulationWorker(QObject):
         try:
             dem_path = self.dem_layer["path"]
             metadata = inspect_geotiff(dem_path, band=self.dem_layer.get("band", 1))
-            estimated = estimate_reference_memory_bytes(
-                metadata.width,
-                metadata.height,
-                criterion_count=len(self.criterion_layers),
-            )
+            if self.tile_shape is None:
+                estimated = estimate_reference_memory_bytes(
+                    metadata.width,
+                    metadata.height,
+                    criterion_count=len(self.criterion_layers),
+                )
+            else:
+                estimated = estimate_tiled_memory_bytes(
+                    metadata.width,
+                    metadata.height,
+                    criterion_count=len(self.criterion_layers),
+                    tile_shape=self.tile_shape,
+                )
             if estimated > self.memory_budget_bytes:
                 raise MemoryError(
                     f"estimated reference working memory is {estimated / 2**20:.0f} MiB, "
@@ -142,6 +153,7 @@ class SimulationWorker(QObject):
                 valid_mask=dem_grid.valid_mask,
                 progress=self._on_progress,
                 cancel_requested=self._is_cancelled,
+                tile_shape=self.tile_shape,
             )
             elevation_preview = render_raster_preview(
                 simulation.elevation,
@@ -174,3 +186,4 @@ class SimulationWorker(QObject):
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
+

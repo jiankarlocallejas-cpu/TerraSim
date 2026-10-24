@@ -9,11 +9,14 @@ import sys
 
 import numpy as np
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from PyQt5.QtCore import QThread, Qt
 from PyQt5.QtGui import QFont, QPixmap
-from backend.services.paper_model import estimate_reference_memory_bytes
+from backend.services.paper_model import (
+    estimate_reference_memory_bytes,
+    estimate_tiled_memory_bytes,
+)
 from backend.services.run_manifest import (
     RunManifestError,
     build_run_manifest,
@@ -37,6 +40,7 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QFrame,
     QDoubleSpinBox,
+    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -401,6 +405,14 @@ class TerraSimDesktop(QMainWindow):
         self.memory_budget_spin.setSingleStep(128)
         self.memory_budget_spin.setValue(512)
         self.memory_budget_spin.setSuffix(" MiB")
+        self.compute_mode_combo = QComboBox()
+        self.compute_mode_combo.addItem("Automatic - tile when needed", "auto")
+        self.compute_mode_combo.addItem("Full grid - faster, more memory", "full")
+        for tile_size in (256, 512, 1024):
+            self.compute_mode_combo.addItem(
+                f"Tiled windows - {tile_size} x {tile_size}", tile_size
+            )
+        run_form.addRow("Processing mode", self.compute_mode_combo)
         run_form.addRow("Total duration · model time units", self.total_time_spin)
         run_form.addRow("Maximum time step", self.max_timestep_spin)
         run_form.addRow("CFL safety factor", self.cfl_spin)
@@ -555,21 +567,62 @@ class TerraSimDesktop(QMainWindow):
             QMessageBox.warning(self, "Input validation failed", str(exc))
             return
 
-        estimated = estimate_reference_memory_bytes(
+        budget = int(self.memory_budget_spin.value() * 2**20)
+        full_grid_estimate = estimate_reference_memory_bytes(
             dem_metadata.width,
             dem_metadata.height,
             criterion_count=len(criteria),
         )
-        budget = int(self.memory_budget_spin.value() * 2**20)
+        selected_mode = self.compute_mode_combo.currentData()
+        tile_shape: Optional[tuple[int, int]] = None
+        if selected_mode == "auto":
+            estimated = full_grid_estimate
+            if estimated > budget:
+                for tile_size in (1024, 512, 256):
+                    tiled_estimate = estimate_tiled_memory_bytes(
+                        dem_metadata.width,
+                        dem_metadata.height,
+                        criterion_count=len(criteria),
+                        tile_shape=(tile_size, tile_size),
+                    )
+                    if tiled_estimate <= budget:
+                        tile_shape = (tile_size, tile_size)
+                        estimated = tiled_estimate
+                        break
+                else:
+                    estimated = estimate_tiled_memory_bytes(
+                        dem_metadata.width,
+                        dem_metadata.height,
+                        criterion_count=len(criteria),
+                        tile_shape=(256, 256),
+                    )
+                    tile_shape = (256, 256)
+        elif selected_mode == "full":
+            estimated = full_grid_estimate
+        else:
+            tile_size = int(selected_mode)
+            tile_shape = (tile_size, tile_size)
+            estimated = estimate_tiled_memory_bytes(
+                dem_metadata.width,
+                dem_metadata.height,
+                criterion_count=len(criteria),
+                tile_shape=tile_shape,
+            )
+
         if estimated > budget:
             QMessageBox.warning(
                 self,
                 "Memory budget exceeded",
-                f"The reference solver estimates {estimated / 2**20:.0f} MiB of working "
-                f"memory, above the selected {budget / 2**20:.0f} MiB budget. "
-                "Use a smaller raster; tiled processing is not available yet.",
+                f"The selected processing mode estimates {estimated / 2**20:.0f} MiB "
+                f"of working memory, above the selected {budget / 2**20:.0f} MiB budget. "
+                "Choose Automatic or a smaller tile, a smaller raster, or a larger budget.",
             )
             return
+        compute_mode = (
+            "full-grid"
+            if tile_shape is None
+            else f"tiled-{tile_shape[0]}x{tile_shape[1]}"
+        )
 
         settings = {
             "alpha": self.alpha_base_spin.value() * self.alpha_control.multiplier,
@@ -585,6 +638,7 @@ class TerraSimDesktop(QMainWindow):
             "cfl": self.cfl_spin.value(),
             "total_time": self.total_time_spin.value(),
             "max_timestep": self.max_timestep_spin.value(),
+            "compute_mode": compute_mode,
         }
         self._last_result = None
         self.export_elevation_button.setEnabled(False)
@@ -598,7 +652,13 @@ class TerraSimDesktop(QMainWindow):
         self.statusBar().showMessage("Simulation started")
 
         thread = QThread(self)
-        worker = SimulationWorker(dem, criteria, settings, memory_budget_bytes=budget)
+        worker = SimulationWorker(
+            dem,
+            criteria,
+            settings,
+            memory_budget_bytes=budget,
+            tile_shape=tile_shape,
+        )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._update_simulation_progress)
@@ -1227,6 +1287,7 @@ class TerraSimDesktop(QMainWindow):
         self.max_timestep_spin.setValue(0.1)
         self.cfl_spin.setValue(0.25)
         self.memory_budget_spin.setValue(512)
+        self.compute_mode_combo.setCurrentIndex(0)
         self.project_label.setText("Untitled project")
         self._refresh_layer_list()
         self.statusBar().showMessage("New project", 3000)
@@ -1263,6 +1324,10 @@ class TerraSimDesktop(QMainWindow):
                 self.max_timestep_spin.setValue(float(controls.get("max_timestep", 0.1)))
                 self.cfl_spin.setValue(float(controls.get("cfl", 0.25)))
                 self.memory_budget_spin.setValue(float(controls.get("memory_budget_mib", 512)))
+                compute_mode = controls.get("compute_mode", "auto")
+                mode_index = self.compute_mode_combo.findData(compute_mode)
+                if mode_index >= 0:
+                    self.compute_mode_combo.setCurrentIndex(mode_index)
             self.project_path = Path(path)
             self.project_label.setText(self.project_path.name)
             self._refresh_layer_list()
@@ -1297,6 +1362,7 @@ class TerraSimDesktop(QMainWindow):
                 "max_timestep": self.max_timestep_spin.value(),
                 "cfl": self.cfl_spin.value(),
                 "memory_budget_mib": self.memory_budget_spin.value(),
+                "compute_mode": self.compute_mode_combo.currentData(),
                 "status": "user supplied or exploratory; coefficients are not yet calibrated",
             },
         }
@@ -1369,6 +1435,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
