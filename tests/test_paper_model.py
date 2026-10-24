@@ -2,7 +2,11 @@
 import numpy as np
 import pytest
 
-from backend.services.paper_model import ExnerTerrainModel, weighted_susceptibility_index
+from backend.services.paper_model import (
+    ExnerTerrainModel,
+    estimate_reference_memory_bytes,
+    weighted_susceptibility_index,
+)
 
 
 def make_model(**overrides):
@@ -201,4 +205,24 @@ def test_simulation_can_cancel_between_substeps():
     assert result.cancelled
     assert result.step_count == 2
     assert result.elapsed_time < stable_dt * 10
+
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "criterion_count", "expected"),
+    [(10, 20, 0, 51200), (10, 20, 2, 54400)],
+)
+def test_reference_memory_estimate(width, height, criterion_count, expected):
+    assert estimate_reference_memory_bytes(width, height, criterion_count) == expected
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "criterion_count"),
+    [(0, 1, 0), (1, 0, 0), (1, 1, -1)],
+)
+def test_reference_memory_estimate_rejects_invalid_dimensions(
+    width, height, criterion_count
+):
+    with pytest.raises(ValueError):
+        estimate_reference_memory_bytes(width, height, criterion_count)
 
