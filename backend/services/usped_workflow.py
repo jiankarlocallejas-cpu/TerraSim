@@ -46,7 +46,13 @@ class USPEDWorkflow:
     10. Classify results
     """
     
-    def __init__(self, elevation: np.ndarray, cell_size: float = 1.0):
+    def __init__(
+        self,
+        elevation: np.ndarray,
+        cell_size: float = 1.0,
+        cell_size_y: Optional[float] = None,
+        nodata: Optional[float] = None,
+    ):
         """
         Initialize USPED workflow
         
@@ -54,8 +60,14 @@ class USPEDWorkflow:
             elevation: Digital Elevation Model
             cell_size: Cell size in meters
         """
-        self.elevation = elevation.copy()
+        self.elevation = np.asarray(elevation).copy()
         self.cell_size = cell_size
+        self.cell_size_y = cell_size if cell_size_y is None else cell_size_y
+        self.nodata = nodata
+        self.valid_mask = np.isfinite(self.elevation)
+        if nodata is not None and np.isfinite(nodata):
+            self.valid_mask &= self.elevation != nodata
+        self.slope_valid_mask = self.valid_mask.copy()
         self.results = {}
         self.current_step = WorkflowStep.LOAD_DATA
         
@@ -98,6 +110,8 @@ class USPEDWorkflow:
         # Validate inputs
         if self.elevation is None:
             raise ValueError("Elevation data required")
+        if not np.any(self.valid_mask):
+            raise ValueError("Elevation data contains no valid cells")
         
         self.current_step = WorkflowStep.LOAD_DATA
         self.results['elevation'] = self.elevation
@@ -105,8 +119,8 @@ class USPEDWorkflow:
         return {
             'step': 'Load Data',
             'shape': self.elevation.shape,
-            'min_elev': float(np.min(self.elevation)),
-            'max_elev': float(np.max(self.elevation)),
+            'min_elev': float(np.min(self.elevation[self.valid_mask])),
+            'max_elev': float(np.max(self.elevation[self.valid_mask])),
             'status': 'Data loaded successfully'
         }
     
@@ -116,24 +130,35 @@ class USPEDWorkflow:
         
         # Compute slope using Sobel operator
         x_kernel = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]) / (8.0 * self.cell_size)
-        y_kernel = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]]) / (8.0 * self.cell_size)
-        
-        dz_dx = convolve(self.elevation, x_kernel)
-        dz_dy = convolve(self.elevation, y_kernel)
-        
-        # Slope in degrees
+        y_kernel = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]]) / (8.0 * self.cell_size_y)
+
+        # Do not allow nodata sentinels to contaminate derivatives around holes.
+        safe_elevation = np.where(self.valid_mask, self.elevation, 0.0)
+        support = convolve(
+            self.valid_mask.astype(np.uint8), np.ones((3, 3), dtype=np.uint8)
+        ) == 9
+        self.slope_valid_mask = self.valid_mask & support
+        dz_dx = convolve(safe_elevation, x_kernel)
+        dz_dy = convolve(safe_elevation, y_kernel)
+
+        # Slope in degrees; cells touching nodata remain invalid.
         self.slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
+        self.slope[~self.slope_valid_mask] = np.nan
         
         self.current_step = WorkflowStep.COMPUTE_SLOPE
         self.results['slope'] = self.slope
         
-        logger.info(f"Slope computed: min={np.min(self.slope):.2f}°, max={np.max(self.slope):.2f}°")
+        valid_slopes = self.slope[self.slope_valid_mask]
+        min_slope = float(np.min(valid_slopes)) if valid_slopes.size else float("nan")
+        max_slope = float(np.max(valid_slopes)) if valid_slopes.size else float("nan")
+        mean_slope = float(np.mean(valid_slopes)) if valid_slopes.size else float("nan")
+        logger.info("Slope computed: min=%.2f°, max=%.2f°", min_slope, max_slope)
         
         return {
             'step': 'Compute Slope',
-            'min': float(np.min(self.slope)),
-            'max': float(np.max(self.slope)),
-            'mean': float(np.mean(self.slope)),
+            'min': min_slope,
+            'max': max_slope,
+            'mean': mean_slope,
             'status': 'Slope map computed'
         }
     
@@ -145,25 +170,30 @@ class USPEDWorkflow:
             raise ValueError("Slope must be computed first")
         
         # Compute aspect using gradients
-        x_kernel = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]) / 8.0
-        y_kernel = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]]) / 8.0
-        
-        dz_dx = convolve(self.elevation, x_kernel)
-        dz_dy = convolve(self.elevation, y_kernel)
-        
+        x_kernel = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]) / (8.0 * self.cell_size)
+        y_kernel = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]]) / (8.0 * self.cell_size_y)
+
+        safe_elevation = np.where(self.valid_mask, self.elevation, 0.0)
+        dz_dx = convolve(safe_elevation, x_kernel)
+        dz_dy = convolve(safe_elevation, y_kernel)
+
         # Aspect in degrees (0-360)
         self.aspect = np.degrees(np.arctan2(dz_dx, -dz_dy))
+        self.aspect[~self.slope_valid_mask] = np.nan
         self.aspect = (self.aspect + 360) % 360
         
         self.current_step = WorkflowStep.COMPUTE_ASPECT
         self.results['aspect'] = self.aspect
         
-        logger.info(f"Aspect computed: min={np.min(self.aspect):.1f}°, max={np.max(self.aspect):.1f}°")
+        valid_aspects = self.aspect[self.slope_valid_mask]
+        min_aspect = float(np.min(valid_aspects)) if valid_aspects.size else float("nan")
+        max_aspect = float(np.max(valid_aspects)) if valid_aspects.size else float("nan")
+        logger.info("Aspect computed: min=%.1f°, max=%.1f°", min_aspect, max_aspect)
         
         return {
             'step': 'Compute Aspect',
-            'min': float(np.min(self.aspect)),
-            'max': float(np.max(self.aspect)),
+            'min': min_aspect,
+            'max': max_aspect,
             'status': 'Aspect map computed'
         }
     
@@ -172,7 +202,12 @@ class USPEDWorkflow:
         logger.info("Step 4: Computing flow accumulation...")
         
         # D-infinity routing leaves depressions as explicit terminal cells.
-        routing = route_dinf(self.elevation, cell_size_x=self.cell_size)
+        routing = route_dinf(
+            self.elevation,
+            cell_size_x=self.cell_size,
+            cell_size_y=self.cell_size_y,
+            nodata=self.nodata,
+        )
         self.flow_direction = routing.flow_direction
         self.flow_accum = routing.contributing_area
         
