@@ -60,23 +60,29 @@ Do not invent calibrated coefficients. The paper does not provide enough calibra
 
 **Remaining gate:** load pixel arrays in the background after a memory preflight, run the model, and export a result raster.
 
-### 4. Connect the solver to Qt
+### 4. Connect the solver to Qt — run/export gate passed; saved-run gate remains
 
-- Persist the full model configuration and its provenance with each scenario.
-- Run computation off the UI thread; provide progress, cancellation, clear errors, and a pre-run memory estimate.
-- Show input/parameter summaries, time-step controls, and a terrain/erosion preview.
-- Export final rasters and a run manifest; do not retain every time step in memory by default.
+- Persist model settings and input roles in the project.
+- Load rasters and compute away from the UI thread; expose progress and cancellation checkpoints.
+- Estimate memory before loading pixels and enforce the selected budget.
+- Summarize run diagnostics and export final elevation and susceptibility rasters.
+- Keep a run's input and coefficient provenance available for later review.
 
-**Exit gate:** the sample project can run end-to-end, cancel cleanly, reopen results, and produce repeatable output.
+**Checks run:** the Qt worker loads synthetic aligned GeoTIFFs, calculates a weighted MCE layer, advances the DEM with the Exner reference, updates the Results page, and exports both outputs with source CRS, transform, and dimensions. A second offscreen Qt check requests cancellation by closing the application during a worker run and confirms that the window waits for the worker to stop before destroying its thread. The full suite passes 51 tests; backend-focused coverage is 81%.
 
-### 5. Profile and bound memory
+**Remaining gate:** write and reopen a run manifest/result record, retain calibration provenance with each run, and add a spatial preview. Scenarios remains a placeholder. These are distinct from the already working Run/export path.
 
-A faster kernel alone does not solve out-of-memory failures. Measure time and peak memory by stage, then:
+### 5. Profile and bound memory — initial diagnostic complete
 
-- Estimate memory from grid size, cell types, work buffers, and retained outputs before starting.
-- Reuse arrays and stream intermediate/final rasters to disk.
+A first Windows/Python 3.12 diagnostic ran one synthetic 30 m-grid update with `α=β=0.01`. A 512×512 raster took 0.137 s with a 43.5 MiB peak working-set increase; a 1024×1024 raster took 0.455 s with a 172.2 MiB increase. The corresponding preflight estimates are 64 MiB and 256 MiB. This is a single-step synthetic diagnostic on one machine, not a large-raster or multi-step performance claim.
+
+The estimator reserves 256 bytes per DEM cell and 16 bytes per criterion cell for the source and float64 conversion copies. The estimate remains approximate and does not replace OS-level memory availability checks.
+
+Next:
+- Profile multi-step runs and peak memory with realistic nodata patterns and several criteria.
+- Reuse solver buffers and stream intermediate/final rasters to disk.
 - Add window/tile processing with neighbor halos and consistent fluxes at tile edges.
-- Expose a memory budget and select a small-grid mode for laptop validation.
+- Keep a laptop-sized mode and reject runs that exceed its user-selected memory budget.
 
 **Exit gate:** tile and full-grid runs agree within a documented tolerance and pass the same conservation checks.
 
@@ -115,4 +121,6 @@ If water-flow simulation is later required, specify whether the target is depth-
 
 ## Current status
 
-The Qt shell passes an offscreen project/raster-role round trip. GeoTIFF preflight and raster alignment checks are connected to the Input Data page. The paper-aligned MCE and Exner reference are implemented, with the solver ready for Qt integration. The current temporary verification tree reports 41 passing tests and 80% coverage across the focused modules. Raster pixel loading, UI simulation, result export, large-raster runtime, out-of-core processing, and Rust acceleration remain unfinished.
+The Qt desktop workflow now runs the Python reference model on a background worker, reports progress, supports checkpoint cancellation, estimates memory before raster loading, and exports final elevation and susceptibility GeoTIFFs. An offscreen end-to-end check covers run, results summary, close-during-run cancellation, and both exports. The current full suite passes 51 tests; backend-focused coverage is 81%.
+
+Initial one-step memory and runtime diagnostics are recorded in Stage 5. Multi-step profiling, realistic large-raster benchmarks, windowed/tiled processing, saved-run manifests and reload, spatial previews, scenario comparison, and Rust acceleration remain future gates. The Scenarios page is still a placeholder. TerraSim is a terrain/sediment evolution model, not a fluid solver or CFD application.
