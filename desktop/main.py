@@ -6,23 +6,31 @@ from __future__ import annotations
 
 import json
 import sys
+
+import numpy as np
 from pathlib import Path
 from typing import Any
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QThread, Qt
 from PyQt5.QtGui import QFont
+from backend.services.paper_model import estimate_reference_memory_bytes
 from backend.services.raster_inputs import (
     RasterInputError,
     RasterMetadata,
     alignment_errors,
     inspect_geotiff,
+    require_aligned,
+    save_geotiff,
 )
+from desktop.simulation_worker import DesktopSimulationResult, SimulationWorker
 
 from PyQt5.QtWidgets import (
     QAction,
     QApplication,
     QFileDialog,
     QFrame,
+    QDoubleSpinBox,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -30,6 +38,7 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QSlider,
     QStackedWidget,
     QVBoxLayout,
@@ -95,6 +104,9 @@ class TerraSimDesktop(QMainWindow):
         super().__init__()
         self.project_path: Path | None = None
         self.layers: list[dict[str, Any]] = []
+        self._simulation_thread: QThread | None = None
+        self._simulation_worker: SimulationWorker | None = None
+        self._last_result: DesktopSimulationResult | None = None
         self._build_window()
         self._build_menu()
         self._show_page(0)
@@ -158,10 +170,7 @@ class TerraSimDesktop(QMainWindow):
             "Scenario comparison",
             "Set up baseline, rainfall, and vegetation scenarios after the model inputs are loaded.",
         ))
-        self.pages.addWidget(self._placeholder_page(
-            "Results",
-            "Simulation outputs and map layers will appear here when the paper-aligned model is connected.",
-        ))
+        self.pages.addWidget(self._results_page())
         content_layout.addWidget(self.pages, 1)
 
         self.statusBar().showMessage("Ready")
@@ -256,6 +265,21 @@ class TerraSimDesktop(QMainWindow):
         self.layer_list.currentRowChanged.connect(self._update_layer_actions)
         layout.addWidget(self.layer_list, 1)
 
+        weight_row = QHBoxLayout()
+        weight_label = QLabel(
+            "Selected criterion weight · all criterion weights must sum to 1.0000"
+        )
+        weight_label.setObjectName("muted")
+        weight_row.addWidget(weight_label)
+        self.criterion_weight_control = QDoubleSpinBox()
+        self.criterion_weight_control.setDecimals(4)
+        self.criterion_weight_control.setRange(0.0, 1.0)
+        self.criterion_weight_control.setSingleStep(0.05)
+        self.criterion_weight_control.setEnabled(False)
+        self.criterion_weight_control.valueChanged.connect(self._update_selected_weight)
+        weight_row.addWidget(self.criterion_weight_control)
+        layout.addLayout(weight_row)
+
         self.data_hint = QLabel()
         self.data_hint.setWordWrap(True)
         self.data_hint.setObjectName("muted")
@@ -267,57 +291,361 @@ class TerraSimDesktop(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        layout.setSpacing(14)
 
         intro = QLabel(
-            "Adjust relative transport strength for sensitivity exploration. These controls are "
-            "multipliers; they are not claimed to be calibrated physical coefficient values."
+            "The Python reference solver evolves terrain by sediment-flux divergence. "
+            "Enter coefficients and time units from a calibration or mark them as exploratory. "
+            "The paper does not provide a validated soil-to-α/β conversion."
         )
         intro.setWordWrap(True)
         intro.setObjectName("muted")
         layout.addWidget(intro)
 
-        panel = QFrame()
-        panel.setObjectName("panel")
-        panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(22, 18, 22, 18)
-        panel_layout.setSpacing(12)
-        alpha = ParameterControl(
-            "α · Slope-driven transport",
-            "Scales the paper's slope-driven transport response. Rainfall and runoff data may "
-            "inform a recommendation once the conversion is defined and calibrated.",
-        )
-        beta = ParameterControl(
-            "β · Background diffusion",
-            "Scales background diffusion such as creep and rainsplash. Soil and cover properties "
-            "can inform a sourced suggestion; this control remains adjustable.",
-        )
-        panel_layout.addWidget(alpha)
-        panel_layout.addWidget(beta)
-        layout.addWidget(panel)
+        def numeric_input(value: float, step: float, decimals: int = 6) -> QDoubleSpinBox:
+            control = QDoubleSpinBox()
+            control.setDecimals(decimals)
+            control.setRange(0.0, 1e12)
+            control.setSingleStep(step)
+            control.setValue(value)
+            return control
 
-        provenance = QFrame()
-        provenance.setObjectName("notice")
-        provenance_layout = QVBoxLayout(provenance)
-        provenance_layout.setContentsMargins(20, 16, 20, 16)
-        provenance_title = QLabel("Recommendations and calibration")
-        provenance_title.setObjectName("sectionTitle")
-        provenance_body = QLabel(
-            "Soil datasets can support estimates of erodibility and critical shear stress. "
-            "Those are related soil properties, not interchangeable with this paper's α and β. "
-            "TerraSim will show the source and assumptions for any recommendation rather than "
-            "silently converting one parameter into another."
+        coefficients = QFrame()
+        coefficients.setObjectName("panel")
+        coefficient_layout = QVBoxLayout(coefficients)
+        coefficient_layout.setContentsMargins(22, 18, 22, 18)
+        coefficient_layout.setSpacing(8)
+        coefficient_title = QLabel("Transport coefficients")
+        coefficient_title.setObjectName("sectionTitle")
+        coefficient_layout.addWidget(coefficient_title)
+        coefficient_form = QFormLayout()
+        self.alpha_base_spin = numeric_input(0.0, 0.01, 8)
+        self.beta_base_spin = numeric_input(0.0, 0.01, 8)
+        coefficient_form.addRow("Base α value · user supplied", self.alpha_base_spin)
+        coefficient_form.addRow("Base β value · user supplied", self.beta_base_spin)
+        coefficient_layout.addLayout(coefficient_form)
+        self.alpha_control = ParameterControl(
+            "α sensitivity multiplier",
+            "Exploratory multiplier applied to the base coefficient above.",
         )
-        provenance_body.setWordWrap(True)
-        provenance_body.setObjectName("muted")
-        provenance_layout.addWidget(provenance_title)
-        provenance_layout.addWidget(provenance_body)
-        layout.addWidget(provenance)
+        self.beta_control = ParameterControl(
+            "β sensitivity multiplier",
+            "Exploratory multiplier applied to the base coefficient above.",
+        )
+        coefficient_layout.addWidget(self.alpha_control)
+        coefficient_layout.addWidget(self.beta_control)
+        layout.addWidget(coefficients)
+
+        physics = QFrame()
+        physics.setObjectName("panel")
+        physics_layout = QVBoxLayout(physics)
+        physics_layout.setContentsMargins(22, 18, 22, 18)
+        physics_title = QLabel("Terrain transport")
+        physics_title.setObjectName("sectionTitle")
+        physics_layout.addWidget(physics_title)
+        physics_form = QFormLayout()
+        self.critical_slope_spin = numeric_input(0.0, 0.001, 8)
+        self.d_xx_spin = numeric_input(1.0, 0.05, 6)
+        self.d_xy_spin = QDoubleSpinBox()
+        self.d_xy_spin.setDecimals(6)
+        self.d_xy_spin.setRange(-1e6, 1e6)
+        self.d_xy_spin.setSingleStep(0.05)
+        self.d_xy_spin.setValue(0.0)
+        self.d_yy_spin = numeric_input(1.0, 0.05, 6)
+        physics_form.addRow("Critical slope term Sᶜ", self.critical_slope_spin)
+        physics_form.addRow("Diffusion tensor Dₓₓ", self.d_xx_spin)
+        physics_form.addRow("Diffusion tensor Dₓᵧ", self.d_xy_spin)
+        physics_form.addRow("Diffusion tensor Dᵧᵧ", self.d_yy_spin)
+        physics_layout.addLayout(physics_form)
+        physics_note = QLabel(
+            "D is dimensionless here. The identity tensor is an explicit starting assumption; "
+            "adjust it only with a sourced rationale."
+        )
+        physics_note.setWordWrap(True)
+        physics_note.setObjectName("muted")
+        physics_layout.addWidget(physics_note)
+        layout.addWidget(physics)
+
+        run_panel = QFrame()
+        run_panel.setObjectName("panel")
+        run_layout = QVBoxLayout(run_panel)
+        run_layout.setContentsMargins(22, 18, 22, 18)
+        run_title = QLabel("Run controls")
+        run_title.setObjectName("sectionTitle")
+        run_layout.addWidget(run_title)
+        run_form = QFormLayout()
+        self.total_time_spin = numeric_input(1.0, 0.1, 6)
+        self.max_timestep_spin = numeric_input(0.1, 0.01, 8)
+        self.cfl_spin = QDoubleSpinBox()
+        self.cfl_spin.setDecimals(3)
+        self.cfl_spin.setRange(0.001, 1.0)
+        self.cfl_spin.setSingleStep(0.05)
+        self.cfl_spin.setValue(0.25)
+        self.memory_budget_spin = QDoubleSpinBox()
+        self.memory_budget_spin.setDecimals(0)
+        self.memory_budget_spin.setRange(64, 65536)
+        self.memory_budget_spin.setSingleStep(128)
+        self.memory_budget_spin.setValue(512)
+        self.memory_budget_spin.setSuffix(" MiB")
+        run_form.addRow("Total duration · model time units", self.total_time_spin)
+        run_form.addRow("Maximum time step", self.max_timestep_spin)
+        run_form.addRow("CFL safety factor", self.cfl_spin)
+        run_form.addRow("Memory budget · approximate", self.memory_budget_spin)
+        run_layout.addLayout(run_form)
+
+        actions = QHBoxLayout()
+        self.run_button = QPushButton("Run terrain simulation")
+        self.run_button.setObjectName("primaryButton")
+        self.run_button.clicked.connect(self._start_simulation)
+        actions.addWidget(self.run_button)
+        self.cancel_button = QPushButton("Cancel run")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._cancel_simulation)
+        actions.addWidget(self.cancel_button)
+        actions.addStretch(1)
+        run_layout.addLayout(actions)
+        self.run_progress = QProgressBar()
+        self.run_progress.setRange(0, 100)
+        self.run_progress.setValue(0)
+        run_layout.addWidget(self.run_progress)
+        self.run_status = QLabel("No simulation run yet.")
+        self.run_status.setWordWrap(True)
+        self.run_status.setObjectName("muted")
+        run_layout.addWidget(self.run_status)
+        layout.addWidget(run_panel)
         layout.addStretch(1)
-
-        self.alpha_control = alpha
-        self.beta_control = beta
         return page
+
+    def _results_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        summary_panel = QFrame()
+        summary_panel.setObjectName("panel")
+        summary_layout = QVBoxLayout(summary_panel)
+        summary_layout.setContentsMargins(24, 22, 24, 22)
+        heading = QLabel("Latest run")
+        heading.setObjectName("sectionTitle")
+        summary_layout.addWidget(heading)
+        self.results_summary = QLabel(
+            "No results yet. Load a DEM and configure a reference run in Model Settings."
+        )
+        self.results_summary.setWordWrap(True)
+        self.results_summary.setObjectName("muted")
+        summary_layout.addWidget(self.results_summary)
+        layout.addWidget(summary_panel)
+
+        exports = QHBoxLayout()
+        self.export_elevation_button = QPushButton("Export final elevation GeoTIFF")
+        self.export_elevation_button.clicked.connect(self._export_elevation)
+        self.export_elevation_button.setEnabled(False)
+        exports.addWidget(self.export_elevation_button)
+        self.export_susceptibility_button = QPushButton("Export susceptibility GeoTIFF")
+        self.export_susceptibility_button.clicked.connect(self._export_susceptibility)
+        self.export_susceptibility_button.setEnabled(False)
+        exports.addWidget(self.export_susceptibility_button)
+        exports.addStretch(1)
+        layout.addLayout(exports)
+        layout.addStretch(1)
+        return page
+
+    def _start_simulation(self) -> None:
+        if self._simulation_thread is not None and self._simulation_thread.isRunning():
+            return
+        dems = [
+            layer
+            for layer in self.layers
+            if layer.get("valid") and layer.get("role") == "elevation"
+        ]
+        if len(dems) != 1:
+            QMessageBox.warning(
+                self,
+                "DEM required",
+                "Assign exactly one valid projected GeoTIFF as the DEM before running.",
+            )
+            return
+        dem = dems[0]
+        criteria = [
+            layer
+            for layer in self.layers
+            if layer.get("valid") and layer.get("role") == "criterion"
+        ]
+        try:
+            dem_metadata = self._metadata_for_layer(dem)
+            for layer in criteria:
+                require_aligned(dem_metadata, self._metadata_for_layer(layer))
+            if criteria:
+                weight_sum = sum(float(layer.get("weight", 0.0)) for layer in criteria)
+                if abs(weight_sum - 1.0) > 1e-9:
+                    raise ValueError(
+                        f"criterion weights sum to {weight_sum:.4f}; set the total to 1.0000"
+                    )
+        except (RasterInputError, TypeError, ValueError) as exc:
+            QMessageBox.warning(self, "Input validation failed", str(exc))
+            return
+
+        estimated = estimate_reference_memory_bytes(
+            dem_metadata.width,
+            dem_metadata.height,
+            criterion_count=len(criteria),
+        )
+        budget = int(self.memory_budget_spin.value() * 2**20)
+        if estimated > budget:
+            QMessageBox.warning(
+                self,
+                "Memory budget exceeded",
+                f"The reference solver estimates {estimated / 2**20:.0f} MiB of working "
+                f"memory, above the selected {budget / 2**20:.0f} MiB budget. "
+                "Use a smaller raster; tiled processing is not available yet.",
+            )
+            return
+
+        settings = {
+            "alpha": self.alpha_base_spin.value() * self.alpha_control.multiplier,
+            "beta": self.beta_base_spin.value() * self.beta_control.multiplier,
+            "critical_slope_threshold": self.critical_slope_spin.value(),
+            "d_xx": self.d_xx_spin.value(),
+            "d_xy": self.d_xy_spin.value(),
+            "d_yy": self.d_yy_spin.value(),
+            "cfl": self.cfl_spin.value(),
+            "total_time": self.total_time_spin.value(),
+            "max_timestep": self.max_timestep_spin.value(),
+        }
+        self.run_progress.setValue(0)
+        self.run_status.setText(
+            f"Loading {dem['name']} · estimated reference working memory "
+            f"{estimated / 2**20:.1f} MiB."
+        )
+        self.statusBar().showMessage("Simulation started")
+
+        thread = QThread(self)
+        worker = SimulationWorker(dem, criteria, settings, memory_budget_bytes=budget)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._update_simulation_progress)
+        worker.succeeded.connect(self._simulation_completed)
+        worker.failed.connect(self._simulation_failed)
+        worker.cancelled.connect(self._simulation_cancelled)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._simulation_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._simulation_thread = thread
+        self._simulation_worker = worker
+        self.run_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        thread.start()
+
+    def _cancel_simulation(self) -> None:
+        if self._simulation_thread is not None and self._simulation_thread.isRunning():
+            self._simulation_thread.requestInterruption()
+            self.cancel_button.setEnabled(False)
+            self.run_status.setText("Cancellation requested; stopping after the current step.")
+
+    def _update_simulation_progress(
+        self, percent: int, elapsed: float, timestep: float
+    ) -> None:
+        self.run_progress.setValue(percent)
+        self.run_status.setText(
+            f"Running · elapsed {elapsed:.6g} model time units · "
+            f"last step {timestep:.6g}"
+        )
+
+    def _simulation_completed(self, result: DesktopSimulationResult) -> None:
+        self._last_result = result
+        simulation = result.simulation
+        run_state = "Cancelled at requested checkpoint" if simulation.cancelled else "Completed"
+        susceptibility_text = "not calculated"
+        if result.susceptibility_index is not None:
+            valid_index = result.susceptibility_index[
+                np.isfinite(result.susceptibility_index)
+            ]
+            if valid_index.size:
+                susceptibility_text = (
+                    f"{result.criterion_count} criterion raster(s) · "
+                    f"range {float(np.min(valid_index)):.4f}–"
+                    f"{float(np.max(valid_index)):.4f}"
+                )
+        self.results_summary.setText(
+            f"{run_state}\n"
+            f"DEM: {Path(result.dem_path).name}\n"
+            f"Steps: {simulation.step_count} · elapsed: {simulation.elapsed_time:.6g} "
+            "model time units\n"
+            f"Smallest stability limit observed: {simulation.min_stable_timestep:.6g}\n"
+            f"Estimated working memory: {result.estimated_memory_bytes / 2**20:.1f} MiB\n"
+            f"Elevation-volume change: {simulation.mass_after - simulation.mass_before:.6g} "
+            "m³ under closed no-flux boundaries\n"
+            f"Maximum single-step elevation change: "
+            f"{simulation.max_abs_step_change:.6g} m\n"
+            f"Weighted susceptibility: {susceptibility_text}"
+        )
+        self.export_elevation_button.setEnabled(True)
+        self.export_susceptibility_button.setEnabled(
+            result.susceptibility_index is not None
+        )
+        self.run_status.setText(run_state)
+        self.statusBar().showMessage(run_state, 5000)
+        self.navigation.setCurrentRow(4)
+
+    def _simulation_failed(self, message: str) -> None:
+        self.run_status.setText(f"Run failed · {message}")
+        self.statusBar().showMessage("Simulation failed", 5000)
+        QMessageBox.warning(self, "Simulation failed", message)
+
+    def _simulation_cancelled(self) -> None:
+        self.run_status.setText("Cancelled before simulation began.")
+        self.statusBar().showMessage("Simulation cancelled", 5000)
+
+    def _simulation_thread_finished(self) -> None:
+        self.run_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self._simulation_thread = None
+        self._simulation_worker = None
+
+    def _export_elevation(self) -> None:
+        if self._last_result is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export final elevation", "", "GeoTIFF (*.tif)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith((".tif", ".tiff")):
+            path += ".tif"
+        try:
+            saved = save_geotiff(
+                self._last_result.dem_path,
+                path,
+                self._last_result.simulation.elevation,
+                self._last_result.simulation.valid_mask,
+            )
+            self.statusBar().showMessage(f"Saved {Path(saved).name}", 5000)
+        except (OSError, RasterInputError) as exc:
+            QMessageBox.warning(self, "Could not export elevation", str(exc))
+
+    def _export_susceptibility(self) -> None:
+        if self._last_result is None or self._last_result.susceptibility_index is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export susceptibility index", "", "GeoTIFF (*.tif)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith((".tif", ".tiff")):
+            path += ".tif"
+        index = self._last_result.susceptibility_index
+        try:
+            saved = save_geotiff(
+                self._last_result.dem_path,
+                path,
+                index,
+                np.isfinite(index),
+            )
+            self.statusBar().showMessage(f"Saved {Path(saved).name}", 5000)
+        except (OSError, RasterInputError) as exc:
+            QMessageBox.warning(self, "Could not export susceptibility", str(exc))
 
     def _placeholder_page(self, title: str, copy: str) -> QWidget:
         page = QWidget()
@@ -390,7 +718,10 @@ class TerraSimDesktop(QMainWindow):
             self.statusBar().showMessage(f"Inspected {len(paths)} raster file(s)", 5000)
 
     def _register_raster_path(
-        self, path: str, preferred_role: str | None = None
+        self,
+        path: str,
+        preferred_role: str | None = None,
+        preferred_weight: float | None = None,
     ) -> None:
         resolved = (
             str(path)
@@ -404,6 +735,7 @@ class TerraSimDesktop(QMainWindow):
             "name": Path(resolved).name,
             "role": "unassigned",
             "valid": False,
+            "weight": 0.0,
         }
         try:
             metadata = inspect_geotiff(resolved)
@@ -421,10 +753,16 @@ class TerraSimDesktop(QMainWindow):
                 for existing in self.layers:
                     if existing.get("role") == "elevation":
                         existing["role"] = "criterion"
+                        existing["weight"] = 0.0
             layer.update(
                 {
                     "role": role,
                     "valid": True,
+                    "weight": (
+                        max(0.0, min(1.0, float(preferred_weight)))
+                        if role == "criterion" and preferred_weight is not None
+                        else 0.0
+                    ),
                     "metadata": {
                         "width": metadata.width,
                         "height": metadata.height,
@@ -478,7 +816,11 @@ class TerraSimDesktop(QMainWindow):
                 label = f"Needs attention · {layer['name']} · {layer.get('error', 'invalid raster')}"
             else:
                 metadata = self._metadata_for_layer(layer)
-                role = "DEM" if layer.get("role") == "elevation" else "Criterion"
+                role = (
+                    "DEM"
+                    if layer.get("role") == "elevation"
+                    else f"Criterion · w={layer.get('weight', 0.0):.4f}"
+                )
                 label = (
                     f"{role} · {layer['name']} · "
                     f"{metadata.width} × {metadata.height} · "
@@ -515,15 +857,28 @@ class TerraSimDesktop(QMainWindow):
                 + " | ".join(mismatches)
             )
         else:
-            criterion_count = sum(
-                layer.get("valid") and layer.get("role") == "criterion"
+            criteria = [
+                layer
                 for layer in self.layers
-            )
+                if layer.get("valid") and layer.get("role") == "criterion"
+            ]
+            weight_sum = sum(float(layer.get("weight", 0.0)) for layer in criteria)
+            if criteria and abs(weight_sum - 1.0) > 1e-9:
+                criteria_status = (
+                    f"{len(criteria)} aligned criterion raster(s); weights sum "
+                    f"to {weight_sum:.4f} and must total 1.0000."
+                )
+            elif criteria:
+                criteria_status = (
+                    f"{len(criteria)} aligned criterion raster(s) with weights totaling 1.0000. "
+                    "Criterion values must already be normalized to [0, 1]."
+                )
+            else:
+                criteria_status = "No criteria assigned; the MCE overlay will be skipped."
             self.data_hint.setText(
                 f"DEM ready · {dem_metadata.width} × {dem_metadata.height} cells · "
                 f"{dem_metadata.cell_size_x:g} × {dem_metadata.cell_size_y:g} m · "
-                f"{criterion_count} aligned criterion raster(s). "
-                "Reprojection and resampling are not automatic."
+                f"{criteria_status} Reprojection and resampling are not automatic."
             )
 
     def _update_layer_actions(self, *_args: Any) -> None:
@@ -533,6 +888,13 @@ class TerraSimDesktop(QMainWindow):
         selected = 0 <= row < len(self.layers) and self.layers[row].get("valid", False)
         self.set_dem_button.setEnabled(selected)
         self.set_criterion_button.setEnabled(selected)
+        is_criterion = selected and self.layers[row].get("role") == "criterion"
+        self.criterion_weight_control.blockSignals(True)
+        self.criterion_weight_control.setEnabled(is_criterion)
+        self.criterion_weight_control.setValue(
+            float(self.layers[row].get("weight", 0.0)) if is_criterion else 0.0
+        )
+        self.criterion_weight_control.blockSignals(False)
 
     def _set_layer_role(self, role: str) -> None:
         row = self.layer_list.currentRow()
@@ -542,9 +904,21 @@ class TerraSimDesktop(QMainWindow):
             for layer in self.layers:
                 if layer.get("role") == "elevation":
                     layer["role"] = "criterion"
+                    layer["weight"] = 0.0
         self.layers[row]["role"] = role
+        if role == "criterion":
+            self.layers[row].setdefault("weight", 0.0)
+        elif role == "elevation":
+            self.layers[row]["weight"] = 0.0
         self._refresh_layer_list()
         self.layer_list.setCurrentRow(row)
+
+    def _update_selected_weight(self, value: float) -> None:
+        row = self.layer_list.currentRow()
+        if 0 <= row < len(self.layers) and self.layers[row].get("role") == "criterion":
+            self.layers[row]["weight"] = float(value)
+            self._refresh_layer_list()
+            self.layer_list.setCurrentRow(row)
 
     def _remove_selected_layer(self) -> None:
         row = self.layer_list.currentRow()
@@ -560,6 +934,16 @@ class TerraSimDesktop(QMainWindow):
         self.layer_list.clear()
         self.alpha_control.set_multiplier(1.0)
         self.beta_control.set_multiplier(1.0)
+        self.alpha_base_spin.setValue(0.0)
+        self.beta_base_spin.setValue(0.0)
+        self.critical_slope_spin.setValue(0.0)
+        self.d_xx_spin.setValue(1.0)
+        self.d_xy_spin.setValue(0.0)
+        self.d_yy_spin.setValue(1.0)
+        self.total_time_spin.setValue(1.0)
+        self.max_timestep_spin.setValue(0.1)
+        self.cfl_spin.setValue(0.25)
+        self.memory_budget_spin.setValue(512)
         self.project_label.setText("Untitled project")
         self._refresh_layer_list()
         self.statusBar().showMessage("New project", 3000)
@@ -578,12 +962,24 @@ class TerraSimDesktop(QMainWindow):
             for layer in saved_layers:
                 if layer.get("path"):
                     self._register_raster_path(
-                        layer["path"], preferred_role=layer.get("role")
+                        layer["path"],
+                        preferred_role=layer.get("role"),
+                        preferred_weight=layer.get("weight"),
                     )
             controls = payload.get("model_controls", {})
             if isinstance(controls, dict):
                 self.alpha_control.set_multiplier(controls.get("alpha_multiplier", 1.0))
                 self.beta_control.set_multiplier(controls.get("beta_multiplier", 1.0))
+                self.alpha_base_spin.setValue(float(controls.get("alpha_base", 0.0)))
+                self.beta_base_spin.setValue(float(controls.get("beta_base", 0.0)))
+                self.critical_slope_spin.setValue(float(controls.get("critical_slope_threshold", 0.0)))
+                self.d_xx_spin.setValue(float(controls.get("d_xx", 1.0)))
+                self.d_xy_spin.setValue(float(controls.get("d_xy", 0.0)))
+                self.d_yy_spin.setValue(float(controls.get("d_yy", 1.0)))
+                self.total_time_spin.setValue(float(controls.get("total_time", 1.0)))
+                self.max_timestep_spin.setValue(float(controls.get("max_timestep", 0.1)))
+                self.cfl_spin.setValue(float(controls.get("cfl", 0.25)))
+                self.memory_budget_spin.setValue(float(controls.get("memory_budget_mib", 512)))
             self.project_path = Path(path)
             self.project_label.setText(self.project_path.name)
             self._refresh_layer_list()
@@ -608,7 +1004,17 @@ class TerraSimDesktop(QMainWindow):
             "model_controls": {
                 "alpha_multiplier": self.alpha_control.multiplier,
                 "beta_multiplier": self.beta_control.multiplier,
-                "status": "exploratory; coefficients are not yet calibrated",
+                "alpha_base": self.alpha_base_spin.value(),
+                "beta_base": self.beta_base_spin.value(),
+                "critical_slope_threshold": self.critical_slope_spin.value(),
+                "d_xx": self.d_xx_spin.value(),
+                "d_xy": self.d_xy_spin.value(),
+                "d_yy": self.d_yy_spin.value(),
+                "total_time": self.total_time_spin.value(),
+                "max_timestep": self.max_timestep_spin.value(),
+                "cfl": self.cfl_spin.value(),
+                "memory_budget_mib": self.memory_budget_spin.value(),
+                "status": "user supplied or exploratory; coefficients are not yet calibrated",
             },
         }
         try:
@@ -676,4 +1082,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
 
