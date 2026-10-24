@@ -107,6 +107,7 @@ class TerraSimDesktop(QMainWindow):
         self._simulation_thread: QThread | None = None
         self._simulation_worker: SimulationWorker | None = None
         self._last_result: DesktopSimulationResult | None = None
+        self._close_when_simulation_finishes = False
         self._build_window()
         self._build_menu()
         self._show_page(0)
@@ -603,6 +604,22 @@ class TerraSimDesktop(QMainWindow):
         self.cancel_button.setEnabled(False)
         self._simulation_thread = None
         self._simulation_worker = None
+        if self._close_when_simulation_finishes:
+            self._close_when_simulation_finishes = False
+            self.close()
+
+    def closeEvent(self, event) -> None:
+        thread = self._simulation_thread
+        if thread is not None and thread.isRunning():
+            self._close_when_simulation_finishes = True
+            thread.requestInterruption()
+            self.cancel_button.setEnabled(False)
+            self.run_status.setText(
+                "Closing after cancellation at the current simulation checkpoint."
+            )
+            event.ignore()
+            return
+        event.accept()
 
     def _export_elevation(self) -> None:
         if self._last_result is None:
