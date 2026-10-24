@@ -182,3 +182,23 @@ def test_mce_overlay_checks_shapes_and_applies_valid_mask():
             {"a": 0.5, "b": 0.5},
         )
 
+
+
+
+def test_simulation_can_cancel_between_substeps():
+    model = make_model()
+    elevation = np.arange(25, dtype=float).reshape(5, 5)
+    stable_dt = model.stable_timestep(elevation)
+    progress = []
+    result = model.simulate(
+        elevation,
+        total_time=stable_dt * 10,
+        max_timestep=stable_dt * 0.5,
+        progress=lambda steps, elapsed, dt: progress.append((steps, elapsed, dt)),
+        cancel_requested=lambda: len(progress) >= 2,
+    )
+
+    assert result.cancelled
+    assert result.step_count == 2
+    assert result.elapsed_time < stable_dt * 10
+
