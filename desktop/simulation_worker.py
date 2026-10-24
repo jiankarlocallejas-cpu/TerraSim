@@ -14,7 +14,6 @@ from backend.services.paper_model import (
     weighted_susceptibility_index,
 )
 from backend.services.raster_inputs import (
-    RasterGrid,
     inspect_geotiff,
     load_geotiff,
     require_aligned,

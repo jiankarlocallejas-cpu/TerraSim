@@ -7,12 +7,11 @@ Depressions are left as terminal cells for explicit upstream conditioning.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
-from typing import Optional, Sequence
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import numpy as np
-from typing import Optional, Tuple
 
 
 # Counterclockwise from east; raster rows increase south.
