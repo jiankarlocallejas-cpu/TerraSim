@@ -86,7 +86,7 @@ def test_simulation_substeps_to_stability_bound_without_retaining_history():
     assert result.mass_after == pytest.approx(result.mass_before, abs=1e-10)
 
 
-def test_simulation_buffered_updates_match_explicit_steps_and_preserve_inputs():
+def test_simulation_in_place_updates_match_explicit_steps_and_preserve_inputs():
     model = make_model(nodata=-9999.0)
     rng = np.random.default_rng(17)
     elevation = rng.normal(size=(12, 13))
@@ -106,12 +106,22 @@ def test_simulation_buffered_updates_match_explicit_steps_and_preserve_inputs():
     )
 
     expected = original.copy()
+    expected_max_change = 0.0
     for _, _, timestep in progress:
-        expected = model.step(expected, timestep, valid_mask=valid_mask).elevation
+        expected_step = model.step(expected, timestep, valid_mask=valid_mask)
+        expected = expected_step.elevation
+        expected_max_change = max(
+            expected_max_change, expected_step.max_abs_elevation_change
+        )
 
     assert result.step_count == len(progress)
-    np.testing.assert_allclose(result.elevation, expected, rtol=0.0, atol=0.0, equal_nan=True)
-    np.testing.assert_allclose(elevation, original, rtol=0.0, atol=0.0, equal_nan=True)
+    assert result.max_abs_step_change == expected_max_change
+    np.testing.assert_allclose(
+        result.elevation, expected, rtol=0.0, atol=0.0, equal_nan=True
+    )
+    np.testing.assert_allclose(
+        elevation, original, rtol=0.0, atol=0.0, equal_nan=True
+    )
     assert result.elevation[3, 4] == -9999.0
     assert np.isnan(result.elevation[8, 7])
     assert result.elevation[1, 1] == original[1, 1]
