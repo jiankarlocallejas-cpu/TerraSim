@@ -11,6 +11,11 @@ from typing import Callable, Mapping, Optional, Tuple
 
 import numpy as np
 
+try:
+    from terrasim_compute import evaluate_flux_divergence as _rust_evaluate_flux_divergence
+except (ImportError, OSError):
+    _rust_evaluate_flux_divergence = None
+
 
 @dataclass(frozen=True)
 class ExnerStep:
@@ -183,7 +188,7 @@ class ExnerTerrainModel:
         ):
             raise ValueError("elevation must contain real numeric values")
 
-        grid = np.asarray(raw, dtype=np.float64).copy()
+        grid = np.array(raw, dtype=np.float64, order="C", copy=True)
         valid = np.isfinite(grid)
         if self.nodata is not None and math.isfinite(self.nodata):
             valid &= grid != self.nodata
@@ -233,6 +238,24 @@ class ExnerTerrainModel:
         valid: np.ndarray,
     ) -> Tuple[np.ndarray, float]:
         """Return flux divergence and a conservative explicit timestep bound."""
+        if _rust_evaluate_flux_divergence is not None:
+            divergence, stable_timestep = _rust_evaluate_flux_divergence(
+                grid,
+                valid,
+                self.cell_size_x,
+                self.cell_size_y,
+                self.alpha,
+                self.beta,
+                self.critical_slope_threshold,
+                float(self.diffusion_tensor[0, 0]),
+                float(self.diffusion_tensor[0, 1]),
+                float(self.diffusion_tensor[1, 1]),
+                self.cfl,
+            )
+            if not np.all(np.isfinite(divergence[valid])):
+                raise FloatingPointError("non-finite sediment-flux divergence")
+            return divergence, float(stable_timestep)
+
         dz_dx = self._gradient(grid, valid, axis=1, spacing=self.cell_size_x, coordinate_sign=1.0)
         # Raster rows point south, while the model's y coordinate points north.
         dz_dy = self._gradient(grid, valid, axis=0, spacing=self.cell_size_y, coordinate_sign=-1.0)
