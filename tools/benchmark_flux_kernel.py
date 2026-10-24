@@ -2,19 +2,12 @@
 from __future__ import annotations
 
 import json
-import sys
 import time
-from pathlib import Path
 
-# Support direct invocation as documented and used by CI.
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-if str(REPOSITORY_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPOSITORY_ROOT))
+import numpy as np  # noqa: E402
 
-import numpy as np
-
-import backend.services.paper_model as paper_model
-from backend.services.paper_model import ExnerTerrainModel
+import backend.services.paper_model as paper_model  # noqa: E402
+from backend.services.paper_model import ExnerTerrainModel  # noqa: E402
 
 
 def main() -> None:
