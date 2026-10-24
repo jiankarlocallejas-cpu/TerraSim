@@ -401,6 +401,9 @@ class ExnerTerrainModel:
         was_cancelled = False
         min_stable_timestep = math.inf
         max_abs_step_change = 0.0
+        next_grid = grid.copy()
+        invalid = np.logical_not(valid)
+        finite = np.empty(grid.shape, dtype=bool)
 
         while elapsed < total_time:
             if cancel_requested is not None and cancel_requested():
@@ -412,16 +415,17 @@ class ExnerTerrainModel:
             step_size = min(max_timestep, stable_timestep, total_time - elapsed)
             if not math.isfinite(step_size) or step_size <= 0.0:
                 raise FloatingPointError("no positive finite timestep is available")
-            next_grid = grid.copy()
-            next_grid[valid] -= step_size * divergence[valid]
-            if not np.all(np.isfinite(next_grid[valid])):
+            np.multiply(divergence, step_size, out=divergence)
+            np.subtract(grid, divergence, out=next_grid, where=valid)
+            np.isfinite(next_grid, out=finite)
+            np.logical_or(finite, invalid, out=finite)
+            if not np.all(finite):
                 raise FloatingPointError("terrain update produced non-finite elevations")
 
-            max_abs_step_change = max(
-                max_abs_step_change,
-                float(np.max(np.abs(next_grid[valid] - grid[valid]))),
-            )
-            grid = next_grid
+            np.absolute(divergence, out=divergence)
+            step_change = float(np.max(divergence, where=valid, initial=0.0))
+            max_abs_step_change = max(max_abs_step_change, step_change)
+            grid, next_grid = next_grid, grid
             step_count += 1
             min_stable_timestep = min(min_stable_timestep, stable_timestep)
             if step_size == total_time - elapsed:
