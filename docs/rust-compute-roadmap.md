@@ -34,7 +34,7 @@ Keep the old USPED workflow available as a reference while the paper-aligned mod
 
 **Integration gate:** passed. The legacy workflow now accepts the source nodata value and both cell dimensions, excludes nodata from terrain statistics/derivatives, and passes them to D∞. The saved suite passes with the repository pytest configuration: 14 tests passed, 72% coverage for the focused modules.
 
-### 2. Paper-aligned Python terrain model — next
+### 2. Paper-aligned Python terrain model — reference gate passed
 
 Implement the paper as a separate, small-grid reference path:
 
@@ -45,7 +45,9 @@ Implement the paper as a separate, small-grid reference path:
 
 Do not invent calibrated coefficients. The paper does not provide enough calibration to turn soil or rainfall values into validated `α` and `β`; show provenance and keep exploratory controls adjustable until a defensible relationship is established.
 
-**Exit gate:** equation-by-equation tests on uniform terrain, a known planar gradient, threshold activation, `α`/`β` sensitivity, time-step stability, and sediment-volume balance.
+**Checks run:** `backend/services/paper_model.py` now provides the weighted MCE overlay and conservative closed-boundary Exner reference update. It masks nodata, validates the tensor and coefficients, limits explicit timesteps, and advances without retaining a full time history. The focused checks cover flat and sloped surfaces, threshold/α/β response, anisotropy, stability rejection, adaptive substeps, nodata, and volume conservation. The complete current suite passes: 31 tests, 79% coverage across the focused modules.
+
+**Remaining gate:** connect the solver to project/scenario settings in Qt, then validate it on raster inputs with explicit CRS, resolution, and parameter provenance.
 
 ### 3. GIS inputs and validation
 
@@ -111,4 +113,4 @@ If water-flow simulation is later required, specify whether the target is depth-
 
 ## Current status
 
-The Qt shell and project persistence pass an offscreen smoke check. The D∞ reference router and its legacy workflow integration pass 14 saved regression tests. The router remains Python-loop based; no paper-aligned solver has been implemented or connected to the Qt UI. Large-raster runtime, out-of-core processing, and Rust acceleration remain unverified.
+The Qt shell and project persistence pass an offscreen smoke check. The D∞ reference router and its legacy workflow integration pass 14 saved regression tests. The paper-aligned MCE and Exner Python reference modules are implemented and the full suite passes 31 tests. The solver is not yet connected to the Qt UI or GIS raster loading. Large-raster runtime, out-of-core processing, and Rust acceleration remain unverified.
