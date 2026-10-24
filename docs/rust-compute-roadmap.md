@@ -68,25 +68,25 @@ Do not invent calibrated coefficients. The paper does not provide enough calibra
 - Summarize run diagnostics and export final elevation and susceptibility rasters.
 - Keep a run's input and coefficient provenance available for later review.
 
-**Checks run:** the Qt worker loads synthetic aligned GeoTIFFs, calculates a weighted MCE layer, advances the DEM with the Exner reference, updates the Results page, and exports both outputs with source CRS, transform, and dimensions. A second offscreen Qt check requests cancellation by closing the application during a worker run and confirms that the window waits for the worker to stop before destroying its thread. With the Rust extension installed, the Windows CI run passes 58 Python/Qt tests and 3 pure Rust tests.
+**Checks run:** the Qt worker loads synthetic aligned GeoTIFFs, calculates a weighted MCE layer, advances the DEM with the Exner reference, updates the Results page, and exports both outputs with source CRS, transform, and dimensions. A second offscreen Qt check requests cancellation by closing the application during a worker run and confirms that the window waits for the worker to stop before destroying its thread. With the Rust extension installed, the current Windows CI run passes 78 Python/Qt tests and 3 pure Rust tests.
 
 **Saved-run gate:** passed. The Results page writes and reopens a versioned `.terrasim-run.json` file containing source paths and raster metadata, actual coefficients and slider multipliers, run diagnostics, coefficient-provenance notes, and exported output paths. The write is atomic. Reopening restores the report but does not reload raster arrays; the record is deliberately small and references output files by path.
 
 **Remaining gate:** add a spatial preview. Scenarios remains a placeholder.
 
-### 5. Profile and bound memory — initial diagnostic complete
+### 5. Profile and bound memory — tiled execution gate passed; out-of-core remains
 
-A first Windows/Python 3.12 diagnostic ran one synthetic 30 m-grid update with `α=β=0.01`. A 512×512 raster took 0.137 s with a 43.5 MiB peak working-set increase; a 1024×1024 raster took 0.455 s with a 172.2 MiB increase. The corresponding preflight estimates are 64 MiB and 256 MiB. This is a single-step synthetic diagnostic on one machine, not a large-raster or multi-step performance claim.
+The full-grid path updates terrain in place using bounded row scratch rather than retaining a second full update grid. A Python tiled path evaluates the same stencil in windows with two-cell halos. Each simulation step first reduces the stability bound across all tile cores, then computes the update pass with one globally conservative timestep. Cancellation during an incomplete tile pass discards that partial step and returns the last complete terrain.
 
-The estimator reserves 256 bytes per DEM cell and 16 bytes per criterion cell for the source and float64 conversion copies. The estimate remains approximate and does not replace OS-level memory availability checks.
+The desktop offers Automatic, Full grid, and tiled 256/512/1024 modes. Automatic uses the full-grid path if its estimate fits the selected budget; otherwise it selects the largest configured tile size whose estimate fits. The selected and actual compute mode is persisted in the project and run record.
 
-Next:
-- Profile multi-step runs and peak memory with realistic nodata patterns and several criteria.
-- Reuse solver buffers and stream intermediate/final rasters to disk.
-- Add window/tile processing with neighbor halos and consistent fluxes at tile edges.
-- Keep a laptop-sized mode and reject runs that exceed its user-selected memory budget.
+**Parity gate:** passed on synthetic 1024×1024, 10-step input. Full-grid and tiled 512×512 outputs were exactly equal (maximum difference 0.0), with the same step count, stable timestep and maximum step change, and zero mass error. Other tile sizes, nodata holes, masks, boundary halos, invalid sizes, and cancellation also have test coverage.
 
-**Exit gate:** tile and full-grid runs agree within a documented tolerance and pass the same conservation checks.
+**Memory/runtime diagnostic:** in one local Windows/Python 3.12 process comparison on that case, working-set growth was about 180–181 MiB for full grid and 61.2 MiB for tiled 512×512 (about 66% lower). Full grid took about 3.06 s and tiled execution about 6.48 s. Tiling is a memory tradeoff, not a speed improvement. These measurements are one machine and synthetic workload. The selected tile estimate was about 129 MiB, intentionally above measured process growth.
+
+**Important limit:** tiled solver windows only its stencil work. The Qt worker still loads the full DEM and criterion arrays, creates a full susceptibility array, and returns full output arrays for previews and export. Large inputs can therefore still exceed RAM despite a small tile. The tile memory budget is an estimate, not an OS-level guarantee.
+
+**Next gate — true disk-backed raster processing:** read aligned GeoTIFF windows; store step state in temporary raster files or memory-mapped arrays; preserve one global CFL reduction per step; atomically advance only after a complete step; stream final outputs and bounded previews. Validate exact or documented tolerance-based parity, nodata and edge behavior, cancellation cleanup, mass conservation, and measured peak memory before calling this out-of-core.
 
 ### 6. Migrate measured hotspots to Rust — first kernel gate passed; migration continues
 
@@ -96,14 +96,14 @@ The first profiled hotspot was the per-step sediment-flux evaluation. The option
 
 - The native Windows extension builds and installs on CI; the dependency-free Rust core has 3 passing unit tests for flat grids, nodata holes, and invalid shapes/tensors.
 - The Rust evaluator matches the Python reference on anisotropic cells, a non-diagonal diffusion tensor, and a nodata hole. The full run uses identical timesteps and mass balance; the 1024×1024 output difference was exactly 0.0.
-- On the Windows Server 2025 / Python 3.12 CI runner, a synthetic 1024×1024, 10-step case took 1.589 s with Python and 0.527 s with Rust (3.01× faster). This is one controlled benchmark, not a cross-machine or large-raster guarantee. See the [verification run](https://github.com/jiankarlocallejas-cpu/TerraSim/actions/runs/40087726215).
+- On the Windows Server 2025 / Python 3.12 CI runner, the latest synthetic 1024×1024, 10-step case took 1.048 s with Python and 0.205 s with Rust (5.1× faster), with exact output parity. The Rust-enabled suite reported 78 Python/Qt tests and 3 Rust core tests passing. These are controlled single-runner measurements, not a cross-machine or large-raster guarantee. See the [latest verification run](https://github.com/jiankarlocallejas-cpu/TerraSim/actions/runs/40090944062).
 
 **Remaining work:**
 
 - Profile the next hotspots and migrate only kernels that improve measured run time or peak memory.
 - Reduce avoidable full-grid copies across the Python/Rust boundary and measure peak working set, not runtime alone.
 - Keep the Python reference callable for parity checks; keep precision changes opt-in until their error is measured.
-- Tiled execution remains Stage 5 work; test tile-edge flux and whole-grid equivalence before making it a Rust kernel requirement.
+- Python tiled execution is now available under Stage 5; keep it memory-focused and verify any future native tile kernel against the Python reference.
 
 **First-kernel exit gate:** passed for reference parity and measured runtime on the tested grid. The broader Rust migration remains in progress.
 
@@ -135,4 +135,4 @@ If water-flow simulation is later required, specify whether the target is depth-
 
 The Qt desktop workflow runs the Python reference model on a background worker, reports progress, supports checkpoint cancellation, estimates memory before raster loading, and exports final elevation and susceptibility GeoTIFFs. The Results page also saves and reopens a versioned run record with input metadata, coefficients, diagnostics, provenance, and output paths. An offscreen end-to-end check covers run, exports, run-record round-trip, and close-during-run cancellation.
 
-The Rust-enabled Windows CI run builds the extension, passes 3 Rust core tests and 58 Python/Qt tests, and verifies an exact Python/Rust full-run output match. The measured 1024×1024, 10-step case ran 3.01× faster with Rust on that runner. Large realistic raster benchmarks, memory-copy reduction, windowed/tiled processing, spatial previews, scenario comparison, and packaging remain future gates. The Scenarios page is still a placeholder. TerraSim is a terrain/sediment evolution model, not a fluid solver or CFD application.
+The Rust-enabled Windows CI on the current implementation builds the extension, passes 3 Rust core tests and 78 Python/Qt tests, and verifies exact Python/Rust output parity on a 1024×1024, 10-step run (1.048 s Python, 0.205 s Rust on that runner). Python tiled execution also passes its synthetic full-grid parity and conservation gates, reducing measured local working-set growth by about 66% while taking about twice as long in that case. The application still loads complete raster inputs and retains output arrays in RAM: true windowed, disk-backed processing, scenario comparison, realistic large-raster profiles, and packaging remain future gates. The Scenarios page is still a placeholder. TerraSim is a terrain/sediment evolution model, not a fluid solver or CFD application.
