@@ -39,11 +39,17 @@ Create a mixed Rust/Python package using PyO3 and maturin. Keep the public bound
 
 For each kernel, compare Rust with the Python reference on identical small inputs, including edge cells, nodata, flat terrain, and tile boundaries. Benchmark both runtime and peak memory. Replace a Python kernel only after numerical behavior is understood.
 
-### 5. Implement the paper-aligned terrain model
+### 5. Finish and evaluate D-infinity routing
+
+The previous prototype attempted D-infinity (D∞) routing but did not finish it. Treat it as a DEM-based flow-direction and upslope-contributing-area method: it selects a steepest-downslope angle over triangular facets and apportions contributing area to downslope cells. It is a terrain-routing algorithm, not a fluid dynamics solver. Compare its direction and accumulation behavior with established reference cases before using its outputs in a model. Tiled accumulation needs special care because flow dependencies cross tile boundaries.
+
+Reference: Tarboton (1997), [A new method for the determination of flow directions and upslope areas in grid digital elevation models](https://doi.org/10.1029/96WR03137).
+
+### 6. Implement the paper-aligned terrain model
 
 Implement the paper's susceptibility index and sediment-flux/Exner update as a distinct model path. The paper describes terrain evolution from sediment-flux divergence; that is not a water-flow CFD solver. Do not wire coefficients from the older USPED implementation into the paper's equation without an explicit derivation.
 
-### 6. Add fluid-flow simulation as a separate scope
+### 7. Add fluid-flow simulation as a separate scope
 
 If TerraSim should simulate water flow as CFD, specify the governing equations and coupling separately. A depth-averaged 2D shallow-water model is a different scope from a full 3D free-surface flow solver. Both need boundary/initial conditions, friction/turbulence choices, coupling to sediment transport, stability controls, and suitable validation data. “3D” terrain rendering alone does not mean 3D CFD.
 
