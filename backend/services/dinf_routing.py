@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from typing import Optional, Sequence
 
 import numpy as np
 
@@ -45,8 +46,8 @@ class DInfinityResult:
 def route_dinf(
     elevation: np.ndarray,
     cell_size_x: float = 1.0,
-    cell_size_y: float | None = None,
-    nodata: float | None = None,
+    cell_size_y: Optional[float] = None,
+    nodata: Optional[float] = None,
 ) -> DInfinityResult:
     """Compute D-infinity directions and upslope contributing area.
 
@@ -54,9 +55,11 @@ def route_dinf(
     Flats and depressions are not filled or breached. Flow is routed only to
     valid in-grid cells, so terminal area remains on sinks and at the boundary.
     """
-    dem = np.asarray(elevation, dtype=np.float64)
+    dem = np.asarray(elevation)
     if dem.ndim != 2:
         raise ValueError("elevation must be a two-dimensional array")
+    if not np.issubdtype(dem.dtype, np.number) or np.issubdtype(dem.dtype, np.complexfloating):
+        raise ValueError("elevation must contain real numeric values")
     if dem.size == 0:
         raise ValueError("elevation grid cannot be empty")
     if not math.isfinite(cell_size_x) or cell_size_x <= 0:
@@ -72,6 +75,8 @@ def route_dinf(
 
     rows, cols = dem.shape
     count = dem.size
+    if count > np.iinfo(np.int32).max:
+        raise ValueError("grid exceeds the current 32-bit routing queue limit")
     flat_dem = dem.ravel()
     flat_valid = valid.ravel()
 
@@ -101,7 +106,7 @@ def route_dinf(
             source = row * cols + col
             if not flat_valid[source]:
                 continue
-            z0 = flat_dem[source]
+            z0 = float(flat_dem[source])
             best_slope = 0.0
             best_sector = -1
             best_split = 0.0
@@ -115,7 +120,7 @@ def route_dinf(
                     target = rr * cols + cc
                     if flat_valid[target]:
                         neighbor_index[i] = target
-                        neighbor_z[i] = flat_dem[target]
+                        neighbor_z[i] = float(flat_dem[target])
                         drop = z0 - neighbor_z[i]
                         if drop > 0.0:
                             slope = drop / distances[i]
@@ -158,17 +163,18 @@ def route_dinf(
 
             if best_sector >= 0:
                 sector[source] = best_sector
-                split_second[source] = best_split
+                stored_split = float(np.float32(best_split))
+                split_second[source] = stored_split
                 direction[source] = best_direction
                 first_target = neighbor_index[best_sector]
                 second_target = neighbor_index[(best_sector + 1) % 8]
-                if first_target >= 0 and best_split < 1.0:
+                if first_target >= 0 and stored_split < 1.0:
                     inflow_count[first_target] += 1
-                if best_split > 0.0 and second_target >= 0:
+                if stored_split > 0.0 and second_target >= 0:
                     inflow_count[second_target] += 1
 
     # Kahn traversal avoids a global elevation sort and supports split flow.
-    queue = np.empty(count, dtype=np.int64)
+    queue = np.empty(count, dtype=np.int32)
     tail = 0
     for cell in range(count):
         if flat_valid[cell] and inflow_count[cell] == 0:
