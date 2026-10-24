@@ -1,491 +1,503 @@
-"""
-TerraSim Desktop Application
-Cross-platform desktop app using Electron/Python
-"""
+"""Native TerraSim desktop workbench.
 
-import sys
-import os
+This is the Qt entry point for the desktop-first rebuild. Scientific model
+execution is intentionally kept out of this window until the implementation
+matches the equations and calibration described in the TerraSim paper.
+"""
+from __future__ import annotations
+
 import json
-import asyncio
+import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any
 
-import numpy as np
-import pandas as pd
-import geopandas as gpd
-import rasterio
-from PyQt5.QtWidgets import *
-from PyQt5.QtCore import *
-from PyQt5.QtGui import *
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.offline import plot
-import folium
-from folium import plugins
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
+from PyQt5.QtWidgets import (
+    QAction,
+    QApplication,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSlider,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
-# Import backend modules
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
-from main import ErosionEngine, ErosionInput, ErosionResult
 
-class GISCanvas(QWidget):
-    """Advanced GIS visualization canvas using matplotlib and plotly"""
-    
-    def __init__(self):
-        super().__init__()
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
-        
-        # Create matplotlib figure
-        self.figure = plt.figure(figsize=(12, 8))
-        self.canvas = FigureCanvas(self.figure)
-        self.layout.addWidget(self.canvas)
-        
-        # Initialize plot
-        self.ax = self.figure.add_subplot(111)
-        self.setup_map()
-        
-    def setup_map(self):
-        """Setup base map"""
-        self.ax.set_title('TerraSim - GIS Visualization')
-        self.ax.set_xlabel('Longitude')
-        self.ax.set_ylabel('Latitude')
-        self.ax.grid(True, alpha=0.3)
-        
-    def add_raster_layer(self, raster_path: str):
-        """Add raster layer to map"""
-        with rasterio.open(raster_path) as src:
-            data = src.read(1)
-            extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
-            
-            self.ax.imshow(data, extent=extent, cmap='terrain', alpha=0.7)
-            self.canvas.draw()
-            
-    def add_vector_layer(self, vector_path: str):
-        """Add vector layer to map"""
-        gdf = gpd.read_file(vector_path)
-        gdf.plot(ax=self.ax, alpha=0.7, edgecolor='black')
-        self.canvas.draw()
-        
-    def add_erosion_results(self, results: ErosionResult):
-        """Visualize erosion results"""
-        # Create erosion risk map
-        risk_colors = {
-            'Low': '#00FF00',
-            'Moderate': '#FFFF00', 
-            'High': '#FF8C00',
-            'Severe': '#FF0000'
-        }
-        
-        # This would be implemented with actual spatial data
-        self.ax.set_title(f'Erosion Risk: {results.risk_category}')
-        self.ax.text(0.02, 0.98, f'Mean Loss: {results.mean_loss:.2f} tons/ha/year',
-                   transform=self.ax.transAxes, verticalalignment='top',
-                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        self.canvas.draw()
+class ParameterControl(QWidget):
+    """A clearly labeled relative model control, not an uncalibrated coefficient."""
 
-class ErosionCalculator(QWidget):
-    """Erosion calculation panel"""
-    
-    def __init__(self, erosion_engine: ErosionEngine):
-        super().__init__()
-        self.erosion_engine = erosion_engine
-        self.setup_ui()
-        
-    def setup_ui(self):
-        layout = QFormLayout()
-        self.setLayout(layout)
-        
-        # Input fields
-        self.rainfall_input = QDoubleSpinBox()
-        self.rainfall_input.setRange(0, 5000)
-        self.rainfall_input.setValue(1800)
-        self.rainfall_input.setSuffix(" mm/year")
-        
-        self.slope_input = QDoubleSpinBox()
-        self.slope_input.setRange(0, 90)
-        self.slope_input.setValue(15)
-        self.slope_input.setSuffix(" degrees")
-        
-        self.slope_length_input = QDoubleSpinBox()
-        self.slope_length_input.setRange(0, 1000)
-        self.slope_length_input.setValue(100)
-        self.slope_length_input.setSuffix(" meters")
-        
-        self.soil_type_input = QComboBox()
-        self.soil_type_input.addItems(['clay', 'sandy', 'loam', 'silt', 'rocky'])
-        
-        self.vegetation_input = QSlider(Qt.Horizontal)
-        self.vegetation_input.setRange(0, 100)
-        self.vegetation_input.setValue(60)
-        self.vegetation_label = QLabel("60%")
-        
-        self.support_practices_input = QSlider(Qt.Horizontal)
-        self.support_practices_input.setRange(0, 100)
-        self.support_practices_input.setValue(50)
-        self.support_practices_label = QLabel("50%")
-        
-        self.land_use_input = QComboBox()
-        self.land_use_input.addItems(['forest', 'grassland', 'agriculture', 'urban', 'water', 'barren'])
-        
-        self.area_input = QDoubleSpinBox()
-        self.area_input.setRange(0, 10000)
-        self.area_input.setValue(10)
-        self.area_input.setSuffix(" hectares")
-        
-        self.seasonality_input = QComboBox()
-        self.seasonality_input.addItems(['dry', 'wet', 'transitional'])
-        
-        # Connect slider signals
-        self.vegetation_input.valueChanged.connect(
-            lambda v: self.vegetation_label.setText(f"{v}%"))
-        self.support_practices_input.valueChanged.connect(
-            lambda v: self.support_practices_label.setText(f"{v}%"))
-        
-        # Add fields to layout
-        layout.addRow("Annual Rainfall:", self.rainfall_input)
-        layout.addRow("Slope Angle:", self.slope_input)
-        layout.addRow("Slope Length:", self.slope_length_input)
-        layout.addRow("Soil Type:", self.soil_type_input)
-        layout.addRow("Vegetation Cover:", self.vegetation_input)
-        layout.addRow("", self.vegetation_label)
-        layout.addRow("Support Practices:", self.support_practices_input)
-        layout.addRow("", self.support_practices_label)
-        layout.addRow("Land Use:", self.land_use_input)
-        layout.addRow("Area:", self.area_input)
-        layout.addRow("Seasonality:", self.seasonality_input)
-        
-        # Calculate button
-        self.calculate_button = QPushButton("Calculate Erosion")
-        self.calculate_button.clicked.connect(self.calculate_erosion)
-        layout.addRow(self.calculate_button)
-        
-        # Results area
-        self.results_text = QTextEdit()
-        self.results_text.setReadOnly(True)
-        self.results_text.setMaximumHeight(200)
-        layout.addRow("Results:", self.results_text)
-        
-    def calculate_erosion(self):
-        """Calculate erosion using current inputs"""
-        try:
-            input_data = ErosionInput(
-                rainfall=self.rainfall_input.value(),
-                slope=self.slope_input.value(),
-                slope_length=self.slope_length_input.value(),
-                soil_type=self.soil_type_input.currentText(),
-                vegetation_cover=self.vegetation_input.value(),
-                support_practices=self.support_practices_input.value(),
-                land_use=self.land_use_input.currentText(),
-                area=self.area_input.value(),
-                seasonality=self.seasonality_input.currentText()
-            )
-            
-            results = self.erosion_engine.calculate_terrak_sim(input_data)
-            
-            # Display results
-            results_text = f"""
-Erosion Analysis Results
-=====================
+    def __init__(self, title: str, description: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._value = 100
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 8)
 
-Risk Category: {results.risk_category}
-Mean Soil Loss: {results.mean_loss:.2f} tons/ha/year
-Peak Soil Loss: {results.peak_loss:.2f} tons/ha/year
-Total Soil Loss: {results.total_soil_loss:.2f} tons
-Confidence: {results.confidence:.1%}
+        heading = QHBoxLayout()
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("sectionTitle")
+        self.value_label = QLabel("1.00×")
+        self.value_label.setObjectName("parameterValue")
+        heading.addWidget(self.title_label)
+        heading.addStretch(1)
+        heading.addWidget(self.value_label)
+        layout.addLayout(heading)
 
-Factors:
-- Rainfall Factor: {results.factors['rainfall_factor']:.3f}
-- Slope Factor: {results.factors['slope_factor']:.3f}
-- Soil Factor: {results.factors['soil_factor']:.3f}
-- Vegetation Factor: {results.factors['vegetation_factor']:.3f}
-- Land Use Factor: {results.factors['land_use_factor']:.3f}
-- Seasonality Factor: {results.factors['seasonality_factor']:.3f}
+        self.description_label = QLabel(description)
+        self.description_label.setWordWrap(True)
+        self.description_label.setObjectName("muted")
+        layout.addWidget(self.description_label)
 
-RUSLE Comparison:
-- RUSLE Soil Loss: {results.rusle_comparison['soil_loss']:.2f} tons/ha/year
-- Difference: {results.rusle_comparison['difference']:.2f} tons/ha/year
-- Percent Difference: {results.rusle_comparison['percent_difference']:.1f}%
-"""
-            
-            self.results_text.setText(results_text)
-            
-            # Emit results signal
-            self.parent().parent().erosion_results_calculated.emit(results)
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Calculation Error", str(e))
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(10, 300)
+        self.slider.setValue(100)
+        self.slider.valueChanged.connect(self._update_value)
+        layout.addWidget(self.slider)
 
-class LayerManager(QWidget):
-    """GIS layer management panel"""
-    
-    layer_added = pyqtSignal(str, str)  # layer_id, layer_type
-    
-    def __init__(self):
-        super().__init__()
-        self.setup_ui()
-        self.layers = {}
-        
-    def setup_ui(self):
-        layout = QVBoxLayout()
-        self.setLayout(layout)
-        
-        # Layer list
-        self.layer_list = QListWidget()
-        layout.addWidget(QLabel("Layers:"))
-        layout.addWidget(self.layer_list)
-        
-        # Add layer buttons
-        button_layout = QHBoxLayout()
-        
-        self.add_raster_btn = QPushButton("Add Raster")
-        self.add_raster_btn.clicked.connect(self.add_raster_layer)
-        button_layout.addWidget(self.add_raster_btn)
-        
-        self.add_vector_btn = QPushButton("Add Vector")
-        self.add_vector_btn.clicked.connect(self.add_vector_layer)
-        button_layout.addWidget(self.add_vector_btn)
-        
-        layout.addLayout(button_layout)
-        
-        # Layer properties
-        self.opacity_slider = QSlider(Qt.Horizontal)
-        self.opacity_slider.setRange(0, 100)
-        self.opacity_slider.setValue(100)
-        self.opacity_label = QLabel("100%")
-        
-        self.opacity_slider.valueChanged.connect(
-            lambda v: self.opacity_label.setText(f"{v}%"))
-        
-        layout.addWidget(QLabel("Opacity:"))
-        layout.addWidget(self.opacity_slider)
-        layout.addWidget(self.opacity_label)
-        
-        # Remove button
-        self.remove_btn = QPushButton("Remove Layer")
-        self.remove_btn.clicked.connect(self.remove_layer)
-        layout.addWidget(self.remove_btn)
-        
-    def add_raster_layer(self):
-        """Add raster layer"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Raster File", "", 
-            "Raster Files (*.tif *.tiff *.img *.dem);;All Files (*)")
-        
-        if file_path:
-            layer_id = f"raster_{len(self.layers)}"
-            self.layers[layer_id] = {
-                'path': file_path,
-                'type': 'raster',
-                'name': Path(file_path).stem,
-                'visible': True,
-                'opacity': 100
-            }
-            
-            item = QListWidgetItem(self.layers[layer_id]['name'])
-            item.setData(Qt.UserRole, layer_id)
-            item.setCheckState(Qt.Checked)
-            self.layer_list.addItem(item)
-            
-            self.layer_added.emit(layer_id, 'raster')
-            
-    def add_vector_layer(self):
-        """Add vector layer"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Vector File", "",
-            "Vector Files (*.shp *.geojson *.kml *.gpkg);;All Files (*)")
-        
-        if file_path:
-            layer_id = f"vector_{len(self.layers)}"
-            self.layers[layer_id] = {
-                'path': file_path,
-                'type': 'vector',
-                'name': Path(file_path).stem,
-                'visible': True,
-                'opacity': 100
-            }
-            
-            item = QListWidgetItem(self.layers[layer_id]['name'])
-            item.setData(Qt.UserRole, layer_id)
-            item.setCheckState(Qt.Checked)
-            self.layer_list.addItem(item)
-            
-            self.layer_added.emit(layer_id, 'vector')
-            
-    def remove_layer(self):
-        """Remove selected layer"""
-        current_item = self.layer_list.currentItem()
-        if current_item:
-            layer_id = current_item.data(Qt.UserRole)
-            del self.layers[layer_id]
-            self.layer_list.takeItem(self.layer_list.row(current_item))
+        bounds = QHBoxLayout()
+        bounds.addWidget(QLabel("0.10×"))
+        bounds.addStretch(1)
+        bounds.addWidget(QLabel("3.00×"))
+        layout.addLayout(bounds)
+
+    def _update_value(self, value: int) -> None:
+        self._value = value
+        self.value_label.setText(f"{value / 100:.2f}×")
+
+    @property
+    def multiplier(self) -> float:
+        return self._value / 100.0
+
 
 class TerraSimDesktop(QMainWindow):
-    """Main TerraSim desktop application"""
-    
-    erosion_results_calculated = pyqtSignal(object)
-    
-    def __init__(self):
-        super().__init__()
-        self.erosion_engine = ErosionEngine()
-        self.setup_ui()
-        self.setup_connections()
-        
-    def setup_ui(self):
-        self.setWindowTitle("TerraSim - Advanced GIS Erosion Modeling")
-        self.setGeometry(100, 100, 1400, 900)
-        
-        # Create central widget
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        # Main layout
-        main_layout = QHBoxLayout()
-        central_widget.setLayout(main_layout)
-        
-        # Left panel - Layer manager
-        self.layer_manager = LayerManager()
-        self.layer_manager.setMaximumWidth(300)
-        main_layout.addWidget(self.layer_manager)
-        
-        # Center - GIS Canvas
-        self.gis_canvas = GISCanvas()
-        main_layout.addWidget(self.gis_canvas, 1)
-        
-        # Right panel - Erosion calculator
-        self.erosion_calculator = ErosionCalculator(self.erosion_engine)
-        self.erosion_calculator.setMaximumWidth(400)
-        main_layout.addWidget(self.erosion_calculator)
-        
-        # Create menu bar
-        self.create_menu_bar()
-        
-        # Create status bar
-        self.status_bar = self.statusBar()
-        self.status_bar.showMessage("Ready")
-        
-    def create_menu_bar(self):
-        menubar = self.menuBar()
-        
-        # File menu
-        file_menu = menubar.addMenu('File')
-        
-        open_project_action = QAction('Open Project', self)
-        open_project_action.setShortcut('Ctrl+O')
-        open_project_action.triggered.connect(self.open_project)
-        file_menu.addAction(open_project_action)
-        
-        save_project_action = QAction('Save Project', self)
-        save_project_action.setShortcut('Ctrl+S')
-        save_project_action.triggered.connect(self.save_project)
-        file_menu.addAction(save_project_action)
-        
-        file_menu.addSeparator()
-        
-        exit_action = QAction('Exit', self)
-        exit_action.setShortcut('Ctrl+Q')
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-        
-        # Tools menu
-        tools_menu = menubar.addMenu('Tools')
-        
-        import_data_action = QAction('Import GIS Data', self)
-        import_data_action.triggered.connect(self.import_gis_data)
-        tools_menu.addAction(import_data_action)
-        
-        export_results_action = QAction('Export Results', self)
-        export_results_action.triggered.connect(self.export_results)
-        tools_menu.addAction(export_results_action)
-        
-        # Help menu
-        help_menu = menubar.addMenu('Help')
-        
-        about_action = QAction('About TerraSim', self)
-        about_action.triggered.connect(self.show_about)
-        help_menu.addAction(about_action)
-        
-    def setup_connections(self):
-        """Setup signal connections"""
-        self.erosion_results_calculated.connect(self.on_erosion_results)
-        self.layer_manager.layer_added.connect(self.on_layer_added)
-        
-    def on_erosion_results(self, results: ErosionResult):
-        """Handle erosion calculation results"""
-        self.gis_canvas.add_erosion_results(results)
-        self.status_bar.showMessage(f"Erosion calculated: {results.risk_category} risk")
-        
-    def on_layer_added(self, layer_id: str, layer_type: str):
-        """Handle layer addition"""
-        layer_info = self.layer_manager.layers[layer_id]
-        
-        if layer_type == 'raster':
-            self.gis_canvas.add_raster_layer(layer_info['path'])
-        elif layer_type == 'vector':
-            self.gis_canvas.add_vector_layer(layer_info['path'])
-            
-        self.status_bar.showMessage(f"Added {layer_type} layer: {layer_info['name']}")
-        
-    def open_project(self):
-        """Open project file"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project", "", "JSON Files (*.json);;All Files (*)")
-        
-        if file_path:
-            # Load project logic here
-            self.status_bar.showMessage(f"Project opened: {file_path}")
-            
-    def save_project(self):
-        """Save project file"""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Project", "", "JSON Files (*.json);;All Files (*)")
-        
-        if file_path:
-            # Save project logic here
-            self.status_bar.showMessage(f"Project saved: {file_path}")
-            
-    def import_gis_data(self):
-        """Import GIS data"""
-        # This would open a more sophisticated data import dialog
-        self.status_bar.showMessage("GIS data import feature")
-        
-    def export_results(self):
-        """Export analysis results"""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export Results", "", 
-            "PDF Files (*.pdf);;CSV Files (*.csv);;JSON Files (*.json);;All Files (*)")
-        
-        if file_path:
-            # Export logic here
-            self.status_bar.showMessage(f"Results exported: {file_path}")
-            
-    def show_about(self):
-        """Show about dialog"""
-        QMessageBox.about(self, "About TerraSim", 
-                         "TerraSim v2.0.0\n\n"
-                         "Advanced GIS Erosion Modeling Platform\n\n"
-                         "Built with:\n"
-                         "- Python\n"
-                         "- PyQt5\n"
-                         "- GeoPandas\n"
-                         "- Rasterio\n"
-                         "- NumPy\n"
-                         "- SciPy")
+    """Main window for TerraSim's native Qt desktop application."""
 
-def main():
-    """Main entry point for desktop application"""
+    PAGES = ("Overview", "Input Data", "Model Settings", "Scenarios", "Results")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.project_path: Path | None = None
+        self.layers: list[dict[str, Any]] = []
+        self._build_window()
+        self._build_menu()
+        self._show_page(0)
+
+    def _build_window(self) -> None:
+        self.setWindowTitle("TerraSim")
+        self.resize(1440, 900)
+        self.setMinimumSize(1080, 680)
+
+        root = QWidget()
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(230)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(18, 24, 18, 18)
+        sidebar_layout.setSpacing(8)
+
+        brand = QLabel("TerraSim")
+        brand.setObjectName("brand")
+        sidebar_layout.addWidget(brand)
+        subtitle = QLabel("SOIL EROSION WORKBENCH")
+        subtitle.setObjectName("eyebrow")
+        sidebar_layout.addWidget(subtitle)
+        sidebar_layout.addSpacing(28)
+
+        self.navigation = QListWidget()
+        self.navigation.setObjectName("navigation")
+        for page in self.PAGES:
+            self.navigation.addItem(QListWidgetItem(page))
+        self.navigation.currentRowChanged.connect(self._show_page)
+        sidebar_layout.addWidget(self.navigation, 1)
+
+        sidebar_note = QLabel("Desktop edition\nQt · GIS · Terrain modeling")
+        sidebar_note.setObjectName("muted")
+        sidebar_layout.addWidget(sidebar_note)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(32, 24, 32, 20)
+        content_layout.setSpacing(18)
+
+        topbar = QHBoxLayout()
+        self.breadcrumb = QLabel("Overview")
+        self.breadcrumb.setObjectName("pageTitle")
+        topbar.addWidget(self.breadcrumb)
+        topbar.addStretch(1)
+        self.project_label = QLabel("Untitled project")
+        self.project_label.setObjectName("muted")
+        topbar.addWidget(self.project_label)
+        content_layout.addLayout(topbar)
+
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self._overview_page())
+        self.pages.addWidget(self._data_page())
+        self.pages.addWidget(self._model_page())
+        self.pages.addWidget(self._placeholder_page(
+            "Scenario comparison",
+            "Set up baseline, rainfall, and vegetation scenarios after the model inputs are loaded.",
+        ))
+        self.pages.addWidget(self._placeholder_page(
+            "Results",
+            "Simulation outputs and map layers will appear here when the paper-aligned model is connected.",
+        ))
+        content_layout.addWidget(self.pages, 1)
+
+        self.statusBar().showMessage("Ready")
+        root_layout.addWidget(sidebar)
+        root_layout.addWidget(content, 1)
+        self.setCentralWidget(root)
+        self.setStyleSheet(self._stylesheet())
+
+    def _overview_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        intro = QFrame()
+        intro.setObjectName("hero")
+        intro_layout = QVBoxLayout(intro)
+        intro_layout.setContentsMargins(26, 24, 26, 24)
+        title = QLabel("A fresh workspace for terrain and erosion analysis")
+        title.setObjectName("heroTitle")
+        intro_layout.addWidget(title)
+        copy = QLabel(
+            "Start with a DEM and supporting soil, rainfall, and land-cover data. "
+            "TerraSim will keep data preparation, model settings, scenarios, and results together."
+        )
+        copy.setWordWrap(True)
+        copy.setObjectName("muted")
+        intro_layout.addWidget(copy)
+        open_data = QPushButton("Add input data")
+        open_data.setObjectName("primaryButton")
+        open_data.clicked.connect(lambda: self.navigation.setCurrentRow(1))
+        intro_layout.addWidget(open_data, 0, Qt.AlignLeft)
+        layout.addWidget(intro)
+
+        cards = QHBoxLayout()
+        cards.addWidget(self._stat_card("INPUT LAYERS", "0", "DEM, soil, rainfall, cover"))
+        cards.addWidget(self._stat_card("SCENARIOS", "0", "Baseline and alternatives"))
+        cards.addWidget(self._stat_card("MODEL STATUS", "Not run", "Configure inputs first"))
+        layout.addLayout(cards)
+
+        note = QFrame()
+        note.setObjectName("notice")
+        note_layout = QVBoxLayout(note)
+        note_layout.setContentsMargins(20, 16, 20, 16)
+        note_title = QLabel("Model parameters will be explicit")
+        note_title.setObjectName("sectionTitle")
+        note_body = QLabel(
+            "The paper's transport coefficients are not yet calibrated from the available files. "
+            "The interface will distinguish source-based soil suggestions from user-adjustable "
+            "α and β controls, and will identify provisional settings."
+        )
+        note_body.setWordWrap(True)
+        note_body.setObjectName("muted")
+        note_layout.addWidget(note_title)
+        note_layout.addWidget(note_body)
+        layout.addWidget(note)
+        layout.addStretch(1)
+        return page
+
+    def _data_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        description = QLabel(
+            "Add spatial inputs to the project. Source files stay at their original paths; "
+            "the project records references to them."
+        )
+        description.setWordWrap(True)
+        description.setObjectName("muted")
+        layout.addWidget(description)
+
+        actions = QHBoxLayout()
+        add_button = QPushButton("Add files")
+        add_button.setObjectName("primaryButton")
+        add_button.clicked.connect(self._add_data_files)
+        actions.addWidget(add_button)
+        remove_button = QPushButton("Remove selected")
+        remove_button.clicked.connect(self._remove_selected_layer)
+        actions.addWidget(remove_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        self.layer_list = QListWidget()
+        self.layer_list.setObjectName("layerList")
+        layout.addWidget(self.layer_list, 1)
+
+        self.data_hint = QLabel(
+            "Supported inputs: GeoTIFF rasters, common vector GIS files, and CSV tables. "
+            "Coordinate systems and raster alignment need to be checked before modeling."
+        )
+        self.data_hint.setWordWrap(True)
+        self.data_hint.setObjectName("muted")
+        layout.addWidget(self.data_hint)
+        return page
+
+    def _model_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        intro = QLabel(
+            "Adjust relative transport strength for sensitivity exploration. These controls are "
+            "multipliers; they are not claimed to be calibrated physical coefficient values."
+        )
+        intro.setWordWrap(True)
+        intro.setObjectName("muted")
+        layout.addWidget(intro)
+
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(22, 18, 22, 18)
+        panel_layout.setSpacing(12)
+        alpha = ParameterControl(
+            "α · Slope-driven transport",
+            "Scales the paper's slope-driven transport response. Rainfall and runoff data may "
+            "inform a recommendation once the conversion is defined and calibrated.",
+        )
+        beta = ParameterControl(
+            "β · Background diffusion",
+            "Scales background diffusion such as creep and rainsplash. Soil and cover properties "
+            "can inform a sourced suggestion; this control remains adjustable.",
+        )
+        panel_layout.addWidget(alpha)
+        panel_layout.addWidget(beta)
+        layout.addWidget(panel)
+
+        provenance = QFrame()
+        provenance.setObjectName("notice")
+        provenance_layout = QVBoxLayout(provenance)
+        provenance_layout.setContentsMargins(20, 16, 20, 16)
+        provenance_title = QLabel("Recommendations and calibration")
+        provenance_title.setObjectName("sectionTitle")
+        provenance_body = QLabel(
+            "Soil datasets can support estimates of erodibility and critical shear stress. "
+            "Those are related soil properties, not interchangeable with this paper's α and β. "
+            "TerraSim will show the source and assumptions for any recommendation rather than "
+            "silently converting one parameter into another."
+        )
+        provenance_body.setWordWrap(True)
+        provenance_body.setObjectName("muted")
+        provenance_layout.addWidget(provenance_title)
+        provenance_layout.addWidget(provenance_body)
+        layout.addWidget(provenance)
+        layout.addStretch(1)
+
+        self.alpha_control = alpha
+        self.beta_control = beta
+        return page
+
+    def _placeholder_page(self, title: str, copy: str) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(24, 24, 24, 24)
+        heading = QLabel(title)
+        heading.setObjectName("sectionTitle")
+        body = QLabel(copy)
+        body.setWordWrap(True)
+        body.setObjectName("muted")
+        panel_layout.addWidget(heading)
+        panel_layout.addWidget(body)
+        layout.addWidget(panel)
+        layout.addStretch(1)
+        return page
+
+    def _stat_card(self, label: str, value: str, detail: str) -> QFrame:
+        card = QFrame()
+        card.setObjectName("statCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 16, 18, 16)
+        eyebrow = QLabel(label)
+        eyebrow.setObjectName("eyebrow")
+        number = QLabel(value)
+        number.setObjectName("statValue")
+        caption = QLabel(detail)
+        caption.setObjectName("muted")
+        card_layout.addWidget(eyebrow)
+        card_layout.addWidget(number)
+        card_layout.addWidget(caption)
+        return card
+
+    def _build_menu(self) -> None:
+        file_menu = self.menuBar().addMenu("&File")
+        new_action = QAction("New Project", self)
+        new_action.setShortcut("Ctrl+N")
+        new_action.triggered.connect(self._new_project)
+        file_menu.addAction(new_action)
+        open_action = QAction("Open Project…", self)
+        open_action.setShortcut("Ctrl+O")
+        open_action.triggered.connect(self._open_project)
+        file_menu.addAction(open_action)
+        save_action = QAction("Save Project", self)
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self._save_project)
+        file_menu.addAction(save_action)
+        file_menu.addSeparator()
+        file_menu.addAction("Quit", self.close)
+
+    def _show_page(self, index: int) -> None:
+        if index < 0:
+            return
+        self.pages.setCurrentIndex(index)
+        self.breadcrumb.setText(self.PAGES[index])
+
+    def _add_data_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Add spatial input files",
+            "",
+            "Spatial data (*.tif *.tiff *.img *.shp *.gpkg *.geojson *.csv);;All files (*)",
+        )
+        for path in paths:
+            resolved = str(Path(path).resolve())
+            if any(layer["path"] == resolved for layer in self.layers):
+                continue
+            layer = {"path": resolved, "name": Path(resolved).name}
+            self.layers.append(layer)
+            self.layer_list.addItem(layer["name"])
+        if paths:
+            self.statusBar().showMessage(f"Added {len(paths)} input file(s)", 5000)
+
+    def _remove_selected_layer(self) -> None:
+        row = self.layer_list.currentRow()
+        if row < 0:
+            return
+        self.layer_list.takeItem(row)
+        del self.layers[row]
+
+    def _new_project(self) -> None:
+        self.project_path = None
+        self.layers.clear()
+        self.layer_list.clear()
+        self.project_label.setText("Untitled project")
+        self.statusBar().showMessage("New project", 3000)
+
+    def _open_project(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open TerraSim project", "", "TerraSim project (*.terrasim.json *.json)"
+        )
+        if not path:
+            return
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+            self.layers = list(payload.get("layers", []))
+            self.layer_list.clear()
+            for layer in self.layers:
+                self.layer_list.addItem(layer.get("name", Path(layer["path"]).name))
+            self.project_path = Path(path)
+            self.project_label.setText(self.project_path.name)
+            self.statusBar().showMessage("Project opened", 5000)
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            QMessageBox.critical(self, "Could not open project", str(exc))
+
+    def _save_project(self) -> None:
+        path = str(self.project_path) if self.project_path else ""
+        if not path:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save TerraSim project", "", "TerraSim project (*.terrasim.json)"
+            )
+        if not path:
+            return
+        if not path.endswith(".terrasim.json"):
+            path += ".terrasim.json"
+        payload = {
+            "format": "terrasim-project",
+            "version": 1,
+            "layers": self.layers,
+            "model_controls": {
+                "alpha_multiplier": self.alpha_control.multiplier,
+                "beta_multiplier": self.beta_control.multiplier,
+                "status": "exploratory; coefficients are not yet calibrated",
+            },
+        }
+        try:
+            Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            self.project_path = Path(path)
+            self.project_label.setText(self.project_path.name)
+            self.statusBar().showMessage("Project saved", 5000)
+        except OSError as exc:
+            QMessageBox.critical(self, "Could not save project", str(exc))
+
+    @staticmethod
+    def _stylesheet() -> str:
+        return """
+            QWidget { background: #f4f6f8; color: #18212b; font-size: 10pt; }
+            QMainWindow { background: #f4f6f8; }
+            QMenuBar { background: #ffffff; padding: 6px; }
+            QMenuBar::item { padding: 6px 10px; }
+            QMenu { background: #ffffff; }
+            QStatusBar { background: #ffffff; color: #657181; }
+            #sidebar { background: #14212b; color: #f4f7fa; }
+            #sidebar QLabel { background: transparent; }
+            #brand { color: #ffffff; font-size: 22pt; font-weight: 700; }
+            #eyebrow { color: #8293a1; font-size: 8pt; font-weight: 700; }
+            #sidebar #eyebrow { color: #8ba0af; }
+            #navigation { background: transparent; border: 0; outline: 0; color: #cad4dc; }
+            #navigation::item { padding: 12px; border-radius: 7px; }
+            #navigation::item:selected { background: #28404e; color: white; }
+            #pageTitle { font-size: 19pt; font-weight: 650; }
+            #hero, #panel, #statCard, #notice {
+                background: white; border: 1px solid #e1e6eb; border-radius: 10px;
+            }
+            #hero { background: #eaf2f3; }
+            #heroTitle { font-size: 21pt; font-weight: 650; }
+            #sectionTitle { font-size: 12pt; font-weight: 650; }
+            #statValue { font-size: 20pt; font-weight: 650; color: #1d6b65; }
+            #parameterValue { color: #1d6b65; font-weight: 700; }
+            #muted { color: #637181; }
+            QPushButton {
+                background: white; border: 1px solid #d7dee5; border-radius: 6px;
+                padding: 9px 13px;
+            }
+            QPushButton:hover { background: #edf2f5; }
+            #primaryButton {
+                background: #1d6b65; color: white; border: 0; font-weight: 650;
+            }
+            #primaryButton:hover { background: #185954; }
+            QSlider::groove:horizontal { height: 5px; background: #dfe5e9; border-radius: 2px; }
+            QSlider::sub-page:horizontal { background: #1d6b65; border-radius: 2px; }
+            QSlider::handle:horizontal {
+                background: white; border: 2px solid #1d6b65; width: 14px;
+                margin: -6px 0; border-radius: 8px;
+            }
+            #layerList { background: white; border: 1px solid #e1e6eb; border-radius: 8px; }
+        """
+
+    def set_font(self) -> None:
+        font = QFont("Segoe UI", 10)
+        QApplication.setFont(font)
+
+
+def main() -> None:
     app = QApplication(sys.argv)
-    
-    # Set application style
-    app.setStyle('Fusion')
-    
-    # Create and show main window
+    app.setStyle("Fusion")
     window = TerraSimDesktop()
+    window.set_font()
     window.show()
-    
     sys.exit(app.exec_())
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
