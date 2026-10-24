@@ -86,6 +86,38 @@ def test_simulation_substeps_to_stability_bound_without_retaining_history():
     assert result.mass_after == pytest.approx(result.mass_before, abs=1e-10)
 
 
+def test_simulation_buffered_updates_match_explicit_steps_and_preserve_inputs():
+    model = make_model(nodata=-9999.0)
+    rng = np.random.default_rng(17)
+    elevation = rng.normal(size=(12, 13))
+    elevation[3, 4] = -9999.0
+    elevation[8, 7] = np.nan
+    valid_mask = np.ones(elevation.shape, dtype=bool)
+    valid_mask[1, 1] = False
+    original = elevation.copy()
+    progress = []
+
+    result = model.simulate(
+        elevation,
+        total_time=0.13,
+        max_timestep=0.02,
+        valid_mask=valid_mask,
+        progress=lambda steps, elapsed, dt: progress.append((steps, elapsed, dt)),
+    )
+
+    expected = original.copy()
+    for _, _, timestep in progress:
+        expected = model.step(expected, timestep, valid_mask=valid_mask).elevation
+
+    assert result.step_count == len(progress)
+    np.testing.assert_allclose(result.elevation, expected, rtol=0.0, atol=0.0, equal_nan=True)
+    np.testing.assert_allclose(elevation, original, rtol=0.0, atol=0.0, equal_nan=True)
+    assert result.elevation[3, 4] == -9999.0
+    assert np.isnan(result.elevation[8, 7])
+    assert result.elevation[1, 1] == original[1, 1]
+    assert result.mass_after == pytest.approx(result.mass_before, abs=1e-10)
+
+
 def test_alpha_threshold_and_beta_control_transport_response():
     rows, cols = np.mgrid[0:7, 0:7]
     plane = -0.1 * cols.astype(float)
