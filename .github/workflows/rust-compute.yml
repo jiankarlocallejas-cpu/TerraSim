@@ -1,0 +1,45 @@
+name: Rust compute verification
+
+on:
+  push:
+    branches: [qt-desktop-rebuild]
+    paths:
+      - "rust/terrasim_compute/**"
+      - "backend/services/paper_model.py"
+      - "tests/**"
+      - "tools/benchmark_flux_kernel.py"
+      - ".github/workflows/rust-compute.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "rust/terrasim_compute/**"
+      - "backend/services/paper_model.py"
+      - "tests/**"
+      - "tools/benchmark_flux_kernel.py"
+      - ".github/workflows/rust-compute.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-reference-parity:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install desktop and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-desktop.txt pytest pytest-cov
+      - name: Test pure Rust kernel
+        run: cargo test --locked --no-default-features --manifest-path rust/terrasim_compute/Cargo.toml
+      - name: Build and install optional Python extension
+        run: python -m pip install ./rust/terrasim_compute
+      - name: Run Python and Qt suite with Rust enabled
+        run: python -m pytest -q
+      - name: Compare full-run runtime and output against the Python reference
+        run: python tools/benchmark_flux_kernel.py
+
