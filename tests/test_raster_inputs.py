@@ -14,6 +14,7 @@ from backend.services.raster_inputs import (
     inspect_geotiff,
     load_geotiff,
     require_aligned,
+    save_geotiff,
 )
 
 
@@ -142,4 +143,40 @@ def test_aligned_grids_pass_exactly():
 
     assert alignment_errors(grid, grid) == ()
     require_aligned(grid, grid)
+
+
+
+def test_save_result_preserves_reference_grid_and_never_overwrites(tmp_path):
+    reference_path = tmp_path / "reference.tif"
+    output_path = tmp_path / "result.tif"
+    values = np.arange(6, dtype=np.float32).reshape(2, 3)
+    with rasterio.open(
+        reference_path,
+        "w",
+        driver="GTiff",
+        height=2,
+        width=3,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32650",
+        transform=from_origin(500000, 1000, 30, 10),
+        nodata=-9999.0,
+    ) as dataset:
+        dataset.write(values, 1)
+
+    result = values.astype(np.float64) + 10.0
+    valid = np.ones(values.shape, dtype=bool)
+    valid[0, 1] = False
+    save_geotiff(str(reference_path), str(output_path), result, valid)
+
+    with rasterio.open(output_path) as saved:
+        assert saved.crs.to_string() == "EPSG:32650"
+        assert saved.transform == from_origin(500000, 1000, 30, 10)
+        assert saved.dtypes == ("float64",)
+        assert saved.nodata == -9999.0
+        assert saved.read(1)[0, 1] == -9999.0
+        assert saved.read(1)[1, 2] == pytest.approx(15.0)
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        save_geotiff(str(reference_path), str(output_path), result, valid)
 
