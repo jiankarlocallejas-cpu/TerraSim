@@ -19,16 +19,18 @@ On Windows, `run.bat` launches the same application. On macOS and Linux, use `ba
 
 - Native Qt project window with Overview, Input Data, Model Settings, Scenarios, and Results sections.
 - Inspect GeoTIFF metadata without loading raster pixels; require a projected metre-based CRS and a north-up grid.
-- Assign one DEM and criterion rasters, and flag mismatched CRS, dimensions, or pixel transforms.
+- Assign one DEM and criterion rasters, set explicit MCE weights, and flag mismatched CRS, dimensions, or pixel transforms.
 - Save and reopen raster roles, input metadata, and model controls in a `.terrasim.json` project.
+- Run MCE susceptibility and the paper-aligned Exner terrain update on a background Qt worker with progress, cancellation, and an approximate memory preflight.
+- Review timestep, elevation-volume, maximum-step-change, and susceptibility summaries; export final elevation and susceptibility GeoTIFFs with source-grid metadata.
 
 ## Model status
 
-The Python reference services include D-infinity terrain routing and the paper-aligned weighted susceptibility and Exner terrain-update equations. D-infinity routes flow direction and contributing area; it is not a water-flow solver. The Exner reference uses closed no-flux boundaries, masks nodata, checks explicit timestep stability, and conserves valid terrain volume.
+The Python reference services include D-infinity terrain routing and a weighted susceptibility overlay plus conservative Exner terrain update. D-infinity estimates flow direction and contributing area; it is not a water-flow solver. The Exner update applies sediment-flux divergence with closed no-flux boundaries, nodata masks, and explicit stability limits. The Qt Run workflow loads aligned rasters, computes the selected model, shows run diagnostics, and exports GeoTIFF results.
 
-The numerical solver is not yet connected to Qt's Run workflow, and output raster export and tiled/out-of-core simulation remain to be implemented. The relative `α` and `β` controls are exploratory multipliers; coefficient calibration and a defensible conversion from soil/rainfall data are not supplied by the paper. Users must provide parameter values and provenance before interpreting a run scientifically.
+The solver remains a small-grid Python reference. Tiled/out-of-core processing, reopening saved runs, run manifests, map previews, and Rust acceleration are not implemented yet. Memory preflight is an estimate, not an operating-system guarantee. The relative `α` and `β` controls are exploratory multipliers; the paper does not provide a validated conversion from soil or rainfall inputs to those coefficients. Users must enter values and record their provenance before scientific interpretation.
 
-TerraSim is not CFD-capable. A water-flow solver would require a separate governing-equation and validation phase.
+TerraSim is not CFD-capable. A water-flow solver would need a separate governing-equation, boundary-condition, and validation phase.
 
 ## Repository notes
 
