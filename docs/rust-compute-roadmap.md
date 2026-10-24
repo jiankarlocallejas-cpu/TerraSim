@@ -45,18 +45,20 @@ Implement the paper as a separate, small-grid reference path:
 
 Do not invent calibrated coefficients. The paper does not provide enough calibration to turn soil or rainfall values into validated `α` and `β`; show provenance and keep exploratory controls adjustable until a defensible relationship is established.
 
-**Checks run:** `backend/services/paper_model.py` now provides the weighted MCE overlay and conservative closed-boundary Exner reference update. It masks nodata, validates the tensor and coefficients, limits explicit timesteps, and advances without retaining a full time history. The focused checks cover flat and sloped surfaces, threshold/α/β response, anisotropy, stability rejection, adaptive substeps, nodata, and volume conservation. The complete current suite passes: 31 tests, 79% coverage across the focused modules.
+**Checks run:** `backend/services/paper_model.py` now provides the weighted MCE overlay and conservative closed-boundary Exner reference update. It masks nodata, validates the tensor and coefficients, limits explicit timesteps, and advances without retaining a full time history. The focused checks cover flat and sloped surfaces, threshold/α/β response, anisotropy, stability rejection, adaptive substeps, nodata, and volume conservation. The router and solver tests pass: 32 cases. The current full suite passes 41 tests with 80% coverage across the focused modules.
 
 **Remaining gate:** connect the solver to project/scenario settings in Qt, then validate it on raster inputs with explicit CRS, resolution, and parameter provenance.
 
-### 3. GIS inputs and validation
+### 3. GIS inputs and validation — metadata gate passed
 
-- Load GeoTIFF metadata and arrays without guessing CRS, scale, nodata, or units.
-- Require a projected CRS with linear units for metric gradients; warn or request reprojection for angular coordinates.
-- Check raster dimensions, transforms, pixel sizes, alignment, nodata masks, and required inputs before a run.
-- Keep source file paths and model-input choices in the project.
+- Inspect GeoTIFF metadata without loading its pixel array; preserve CRS, metric pixel dimensions, nodata, transform, and data type.
+- Require a projected metre-based CRS and north-up grid; reject missing/geographic CRS and rotated grids with a clear reason.
+- Compare CRS, dimensions, and affine transforms for DEM/criterion alignment before cell-wise combination.
+- Save raster roles and refreshed metadata with the project; re-inspect source files when a project is reopened.
 
-**Exit gate:** a tiny sample project loads, validates, saves, and reports every mismatch before simulation.
+**Checks run:** 8 synthetic GeoTIFF tests and an offscreen Qt input/project round-trip test pass. The UI flags a shifted criterion raster and allows explicit DEM role assignment.
+
+**Remaining gate:** load pixel arrays in the background after a memory preflight, run the model, and export a result raster.
 
 ### 4. Connect the solver to Qt
 
@@ -113,4 +115,4 @@ If water-flow simulation is later required, specify whether the target is depth-
 
 ## Current status
 
-The Qt shell and project persistence pass an offscreen smoke check. The D∞ reference router and its legacy workflow integration pass 14 saved regression tests. The paper-aligned MCE and Exner Python reference modules are implemented and the full suite passes 31 tests. The solver is not yet connected to the Qt UI or GIS raster loading. Large-raster runtime, out-of-core processing, and Rust acceleration remain unverified.
+The Qt shell passes an offscreen project/raster-role round trip. GeoTIFF preflight and raster alignment checks are connected to the Input Data page. The paper-aligned MCE and Exner reference are implemented, with the solver ready for Qt integration. The current temporary verification tree reports 41 passing tests and 80% coverage across the focused modules. Raster pixel loading, UI simulation, result export, large-raster runtime, out-of-core processing, and Rust acceleration remain unfinished.
