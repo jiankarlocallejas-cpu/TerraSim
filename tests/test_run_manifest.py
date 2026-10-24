@@ -69,6 +69,14 @@ def test_run_manifest_rejects_unsupported_version(tmp_path):
         save_run_manifest(tmp_path / "future.json", payload)
 
 
+def test_run_manifest_rejects_missing_coefficient_provenance(tmp_path):
+    payload = _manifest()
+    del payload["coefficient_provenance"]
+
+    with pytest.raises(RunManifestError, match="missing coefficient provenance"):
+        save_run_manifest(tmp_path / "incomplete.json", payload)
+
+
 def test_run_manifest_rejects_corrupt_file(tmp_path):
     path = tmp_path / "broken.json"
     path.write_text("{not json", encoding="utf-8")

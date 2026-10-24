@@ -45,6 +45,10 @@ def _validate_manifest(payload: Any) -> dict[str, Any]:
         )
     if not isinstance(payload.get("created_at"), str) or not payload["created_at"]:
         raise RunManifestError("run record is missing created_at")
+    if not isinstance(payload.get("coefficient_provenance"), str) or not payload[
+        "coefficient_provenance"
+    ]:
+        raise RunManifestError("run record is missing coefficient provenance")
 
     inputs = payload.get("inputs")
     if not isinstance(inputs, list) or not inputs:

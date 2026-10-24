@@ -29,6 +29,7 @@ from backend.services.raster_inputs import (
     save_geotiff,
 )
 from desktop.simulation_worker import DesktopSimulationResult, SimulationWorker
+from desktop.raster_preview import RasterPreview
 
 from PyQt5.QtWidgets import (
     QAction,
@@ -496,7 +497,10 @@ class TerraSimDesktop(QMainWindow):
         return page
 
     @staticmethod
-    def _preview_column(title: str, initial_caption: str):
+    def _preview_column(
+        title: str,
+        initial_caption: str,
+    ) -> tuple[QVBoxLayout, QLabel, QLabel]:
         column = QVBoxLayout()
         heading = QLabel(title)
         heading.setObjectName("sectionTitle")
@@ -882,7 +886,12 @@ class TerraSimDesktop(QMainWindow):
         return "\n".join(lines)
 
     @staticmethod
-    def _display_raster_preview(image_label, caption_label, preview, units: str) -> None:
+    def _display_raster_preview(
+        image_label: QLabel,
+        caption_label: QLabel,
+        preview: RasterPreview | None,
+        units: str,
+    ) -> None:
         if preview is None:
             image_label.setPixmap(QPixmap())
             image_label.setText("Not calculated")
