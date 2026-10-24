@@ -99,8 +99,9 @@ def estimate_reference_memory_bytes(
 ) -> int:
     """Estimate Python reference peak working memory for preflight checks.
 
-    The estimate reserves 256 bytes per DEM cell for solver arrays, plus 8
-    bytes per cell for each criterion array. It is deliberately approximate;
+    The estimate reserves 256 bytes per DEM cell for solver arrays, plus 16
+    bytes per cell for each criterion to cover its source and float64 work copy.
+    It is deliberately approximate;
     it is not a guarantee of available system memory.
     """
     if not isinstance(width, int) or width <= 0:
@@ -109,7 +110,7 @@ def estimate_reference_memory_bytes(
         raise ValueError("height must be a positive integer")
     if not isinstance(criterion_count, int) or criterion_count < 0:
         raise ValueError("criterion_count must be a non-negative integer")
-    return width * height * (256 + 8 * criterion_count)
+    return width * height * (256 + 16 * criterion_count)
 
 
 class ExnerTerrainModel:
