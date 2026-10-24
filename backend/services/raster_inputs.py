@@ -196,3 +196,56 @@ def require_aligned(
         details = "; ".join(issues)
         raise RasterInputError(f"raster is not aligned with the reference grid: {details}")
 
+
+
+def save_geotiff(
+    reference_path: str,
+    output_path: str,
+    elevation: np.ndarray,
+    valid_mask: np.ndarray,
+) -> str:
+    """Write one float64 result band using a reference grid's spatial metadata.
+
+    Existing files are never overwritten. Invalid cells are written as the
+    reference nodata value, or NaN when the reference has no nodata value.
+    """
+    rasterio = _get_rasterio()
+    reference = _resolve_path(reference_path)
+    destination = Path(output_path).expanduser().resolve()
+    if destination.exists():
+        raise FileExistsError(f"output already exists: {destination}")
+    if not destination.parent.exists():
+        raise RasterInputError(f"output directory does not exist: {destination.parent}")
+
+    values = np.asarray(elevation, dtype=np.float64)
+    mask = np.asarray(valid_mask, dtype=bool)
+    if values.ndim != 2 or values.shape != mask.shape:
+        raise RasterInputError("elevation and valid_mask must be matching 2D arrays")
+    if not np.all(np.isfinite(values[mask])):
+        raise RasterInputError("valid result cells must contain finite elevations")
+
+    try:
+        with rasterio.open(reference) as source:
+            if values.shape != (source.height, source.width):
+                raise RasterInputError("result grid shape does not match the reference raster")
+            nodata = source.nodata if source.nodata is not None else float("nan")
+            profile = source.profile.copy()
+            profile.update(
+                count=1,
+                dtype="float64",
+                nodata=nodata,
+                compress="deflate",
+            )
+            if np.any(~mask):
+                output = values.copy()
+                output[~mask] = nodata
+            else:
+                output = values
+        with rasterio.open(str(destination), "w", **profile) as target:
+            target.write(output, 1)
+    except RasterInputError:
+        raise
+    except rasterio.errors.RasterioError as exc:
+        raise RasterInputError(f"could not write result raster {destination}: {exc}") from exc
+    return str(destination)
+
