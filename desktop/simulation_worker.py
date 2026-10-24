@@ -28,6 +28,8 @@ class DesktopSimulationResult:
     susceptibility_index: Optional[np.ndarray]
     estimated_memory_bytes: int
     criterion_count: int
+    model_settings: dict[str, float]
+    input_layers: list[dict[str, Any]]
 
 
 class SimulationWorker(QObject):
@@ -47,9 +49,14 @@ class SimulationWorker(QObject):
         memory_budget_bytes: int,
     ) -> None:
         super().__init__()
-        self.dem_layer = dem_layer
-        self.criterion_layers = criterion_layers
-        self.model_settings = model_settings
+        self.dem_layer = dict(dem_layer)
+        self.dem_layer["metadata"] = dict(dem_layer.get("metadata", {}))
+        self.criterion_layers = []
+        for layer in criterion_layers:
+            snapshot = dict(layer)
+            snapshot["metadata"] = dict(layer.get("metadata", {}))
+            self.criterion_layers.append(snapshot)
+        self.model_settings = dict(model_settings)
         self.memory_budget_bytes = memory_budget_bytes
 
     def _is_cancelled(self) -> bool:
@@ -141,10 +148,11 @@ class SimulationWorker(QObject):
                     susceptibility_index=susceptibility,
                     estimated_memory_bytes=estimated,
                     criterion_count=len(self.criterion_layers),
+                    model_settings=dict(self.model_settings),
+                    input_layers=[self.dem_layer, *self.criterion_layers],
                 )
             )
         except Exception as exc:
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
-

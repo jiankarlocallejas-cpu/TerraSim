@@ -14,6 +14,12 @@ from typing import Any
 from PyQt5.QtCore import QThread, Qt
 from PyQt5.QtGui import QFont
 from backend.services.paper_model import estimate_reference_memory_bytes
+from backend.services.run_manifest import (
+    RunManifestError,
+    build_run_manifest,
+    load_run_manifest,
+    save_run_manifest,
+)
 from backend.services.raster_inputs import (
     RasterInputError,
     RasterMetadata,
@@ -107,6 +113,12 @@ class TerraSimDesktop(QMainWindow):
         self._simulation_thread: QThread | None = None
         self._simulation_worker: SimulationWorker | None = None
         self._last_result: DesktopSimulationResult | None = None
+        self._last_manifest: dict[str, Any] | None = None
+        self._last_manifest_path: Path | None = None
+        self._last_output_paths: dict[str, str | None] = {
+            "elevation": None,
+            "susceptibility": None,
+        }
         self._close_when_simulation_finishes = False
         self._build_window()
         self._build_menu()
@@ -447,6 +459,13 @@ class TerraSimDesktop(QMainWindow):
         self.export_susceptibility_button.clicked.connect(self._export_susceptibility)
         self.export_susceptibility_button.setEnabled(False)
         exports.addWidget(self.export_susceptibility_button)
+        self.save_run_record_button = QPushButton("Save run record…")
+        self.save_run_record_button.clicked.connect(self._save_run_record)
+        self.save_run_record_button.setEnabled(False)
+        exports.addWidget(self.save_run_record_button)
+        self.open_run_record_button = QPushButton("Open run record…")
+        self.open_run_record_button.clicked.connect(self._open_run_record)
+        exports.addWidget(self.open_run_record_button)
         exports.addStretch(1)
         layout.addLayout(exports)
         layout.addStretch(1)
@@ -506,6 +525,10 @@ class TerraSimDesktop(QMainWindow):
         settings = {
             "alpha": self.alpha_base_spin.value() * self.alpha_control.multiplier,
             "beta": self.beta_base_spin.value() * self.beta_control.multiplier,
+            "alpha_base": self.alpha_base_spin.value(),
+            "beta_base": self.beta_base_spin.value(),
+            "alpha_multiplier": self.alpha_control.multiplier,
+            "beta_multiplier": self.beta_control.multiplier,
             "critical_slope_threshold": self.critical_slope_spin.value(),
             "d_xx": self.d_xx_spin.value(),
             "d_xy": self.d_xy_spin.value(),
@@ -556,6 +579,9 @@ class TerraSimDesktop(QMainWindow):
 
     def _simulation_completed(self, result: DesktopSimulationResult) -> None:
         self._last_result = result
+        self._last_manifest = self._manifest_for_result(result)
+        self._last_manifest_path = None
+        self._last_output_paths = {"elevation": None, "susceptibility": None}
         simulation = result.simulation
         run_state = "Cancelled at requested checkpoint" if simulation.cancelled else "Completed"
         susceptibility_text = "not calculated"
@@ -586,6 +612,7 @@ class TerraSimDesktop(QMainWindow):
         self.export_susceptibility_button.setEnabled(
             result.susceptibility_index is not None
         )
+        self.save_run_record_button.setEnabled(True)
         self.run_status.setText(run_state)
         self.statusBar().showMessage(run_state, 5000)
         self.navigation.setCurrentRow(4)
@@ -638,6 +665,8 @@ class TerraSimDesktop(QMainWindow):
                 self._last_result.simulation.elevation,
                 self._last_result.simulation.valid_mask,
             )
+            self._last_output_paths["elevation"] = saved
+            self._update_manifest_outputs()
             self.statusBar().showMessage(f"Saved {Path(saved).name}", 5000)
         except (OSError, RasterInputError) as exc:
             QMessageBox.warning(self, "Could not export elevation", str(exc))
@@ -660,9 +689,148 @@ class TerraSimDesktop(QMainWindow):
                 index,
                 np.isfinite(index),
             )
+            self._last_output_paths["susceptibility"] = saved
+            self._update_manifest_outputs()
             self.statusBar().showMessage(f"Saved {Path(saved).name}", 5000)
         except (OSError, RasterInputError) as exc:
             QMessageBox.warning(self, "Could not export susceptibility", str(exc))
+
+    def _manifest_for_result(self, result: DesktopSimulationResult) -> dict[str, Any]:
+        simulation = result.simulation
+        susceptibility_range = None
+        if result.susceptibility_index is not None:
+            valid_index = result.susceptibility_index[
+                np.isfinite(result.susceptibility_index)
+            ]
+            if valid_index.size:
+                susceptibility_range = [
+                    float(np.min(valid_index)),
+                    float(np.max(valid_index)),
+                ]
+        stable_timestep = simulation.min_stable_timestep
+        diagnostics = {
+            "status": "cancelled" if simulation.cancelled else "completed",
+            "step_count": simulation.step_count,
+            "elapsed_time": simulation.elapsed_time,
+            "min_stable_timestep": (
+                stable_timestep if np.isfinite(stable_timestep) else None
+            ),
+            "estimated_memory_bytes": result.estimated_memory_bytes,
+            "mass_before_m3": simulation.mass_before,
+            "mass_after_m3": simulation.mass_after,
+            "mass_change_m3": simulation.mass_after - simulation.mass_before,
+            "max_abs_step_change_m": simulation.max_abs_step_change,
+            "susceptibility_range": susceptibility_range,
+            "criterion_count": result.criterion_count,
+        }
+        return build_run_manifest(
+            inputs=result.input_layers,
+            model_settings=result.model_settings,
+            diagnostics=diagnostics,
+            outputs=self._last_output_paths,
+            project_path=self.project_path,
+        )
+
+    def _save_run_record(self) -> None:
+        if self._last_result is not None:
+            self._last_manifest = self._manifest_for_result(self._last_result)
+        if self._last_manifest is None:
+            return
+        default_path = (
+            str(self._last_manifest_path) if self._last_manifest_path is not None else ""
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save TerraSim run record",
+            default_path,
+            "TerraSim run record (*.terrasim-run.json)",
+        )
+        if not path:
+            return
+        if not path.endswith(".terrasim-run.json"):
+            path += ".terrasim-run.json"
+        try:
+            saved = save_run_manifest(path, self._last_manifest)
+            self._last_manifest_path = Path(saved)
+            self.save_run_record_button.setEnabled(True)
+            self.statusBar().showMessage(f"Run record saved · {Path(saved).name}", 5000)
+        except (OSError, RunManifestError) as exc:
+            QMessageBox.warning(self, "Could not save run record", str(exc))
+
+    def _open_run_record(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open TerraSim run record",
+            "",
+            "TerraSim run record (*.terrasim-run.json *.json)",
+        )
+        if not path:
+            return
+        try:
+            manifest = load_run_manifest(path)
+        except (OSError, RunManifestError) as exc:
+            QMessageBox.warning(self, "Could not open run record", str(exc))
+            return
+
+        self._last_result = None
+        self._last_manifest = manifest
+        self._last_manifest_path = Path(path).resolve()
+        self._last_output_paths = dict(manifest["outputs"])
+        self.export_elevation_button.setEnabled(False)
+        self.export_susceptibility_button.setEnabled(False)
+        self.save_run_record_button.setEnabled(True)
+        self.results_summary.setText(self._format_run_manifest(manifest))
+        self.navigation.setCurrentRow(4)
+        self.statusBar().showMessage(f"Run record opened · {Path(path).name}", 5000)
+
+    @staticmethod
+    def _format_run_manifest(manifest: dict[str, Any]) -> str:
+        diagnostics = manifest["diagnostics"]
+        dem = next(layer for layer in manifest["inputs"] if layer["role"] == "elevation")
+        lines = [
+            "Saved run record · results arrays are not loaded from the record",
+            f"Created: {manifest['created_at']}",
+            f"DEM: {Path(dem['path']).name}",
+            f"Status: {diagnostics.get('status', 'unknown')}",
+            f"Steps: {diagnostics.get('step_count', 'unknown')} · elapsed: "
+            f"{diagnostics.get('elapsed_time', 'unknown')} model time units",
+            f"Coefficient provenance: {manifest['coefficient_provenance']}",
+        ]
+        stable_timestep = diagnostics.get("min_stable_timestep")
+        stable_text = "unbounded (zero transport response)" if stable_timestep is None else str(stable_timestep)
+        lines.append(f"Smallest stability limit observed: {stable_text}")
+        if "mass_change_m3" in diagnostics:
+            lines.append(f"Elevation-volume change: {diagnostics['mass_change_m3']} m³")
+        if "max_abs_step_change_m" in diagnostics:
+            lines.append(
+                f"Maximum single-step elevation change: "
+                f"{diagnostics['max_abs_step_change_m']} m"
+            )
+        settings = manifest["model_settings"]
+        lines.append(
+            "Transport settings: "
+            f"α={settings.get('alpha', 'unknown')}, β={settings.get('beta', 'unknown')}, "
+            f"Sᶜ={settings.get('critical_slope_threshold', 'unknown')}"
+        )
+        for name, output_path in manifest["outputs"].items():
+            state = "not exported" if output_path is None else output_path
+            lines.append(f"Output · {name}: {state}")
+        return "\n".join(lines)
+
+    def _update_manifest_outputs(self) -> None:
+        if self._last_manifest is None:
+            return
+        self._last_manifest["outputs"] = dict(self._last_output_paths)
+        if self._last_manifest_path is None:
+            return
+        try:
+            save_run_manifest(self._last_manifest_path, self._last_manifest)
+        except (OSError, RunManifestError) as exc:
+            QMessageBox.warning(
+                self,
+                "Could not update run record",
+                f"The GeoTIFF was exported, but the saved run record could not be updated: {exc}",
+            )
 
     def _placeholder_page(self, title: str, copy: str) -> QWidget:
         page = QWidget()
@@ -1099,7 +1267,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 
 
 

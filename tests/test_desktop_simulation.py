@@ -12,6 +12,7 @@ from PyQt5.QtCore import QObject, QEventLoop, QThread, QTimer, pyqtSignal, pyqtS
 from PyQt5.QtWidgets import QApplication, QFileDialog
 
 from desktop.main import TerraSimDesktop
+from backend.services.run_manifest import load_run_manifest
 
 
 @pytest.fixture(scope="module")
@@ -107,6 +108,35 @@ def test_qt_runs_in_background_and_exports_geotiffs(app, tmp_path, monkeypatch):
         assert dataset.read(1)[0, 0] == pytest.approx(0.0)
         assert dataset.read(1)[-1, -1] == pytest.approx(1.0)
 
+    manifest_path = tmp_path / "run.terrasim-run.json"
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *_args, **_kwargs: (str(manifest_path), "")),
+    )
+    window._save_run_record()
+    manifest = load_run_manifest(manifest_path)
+    assert manifest["inputs"][0]["role"] == "elevation"
+    assert manifest["inputs"][0]["metadata"]["crs"] == "EPSG:32650"
+    assert manifest["model_settings"]["alpha"] == pytest.approx(0.01)
+    assert manifest["model_settings"]["alpha_multiplier"] == pytest.approx(1.0)
+    assert manifest["diagnostics"]["status"] == "completed"
+    assert manifest["diagnostics"]["step_count"] > 0
+    assert manifest["outputs"]["elevation"] == str(elevation_output)
+    assert manifest["outputs"]["susceptibility"] == str(susceptibility_output)
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        staticmethod(lambda *_args, **_kwargs: (str(manifest_path), "")),
+    )
+    window._open_run_record()
+    assert window._last_result is None
+    assert "Saved run record" in window.results_summary.text()
+    assert str(elevation_output) in window.results_summary.text()
+    assert not window.export_elevation_button.isEnabled()
+    assert not window.export_susceptibility_button.isEnabled()
+
     window.close()
     app.processEvents()
 
@@ -167,4 +197,3 @@ def test_closing_during_run_cancels_and_waits_for_worker(app, tmp_path, monkeypa
     assert cancelled == [True]
     assert window._simulation_thread is None
     assert not window.isVisible()
-
