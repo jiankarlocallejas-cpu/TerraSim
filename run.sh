@@ -11,7 +11,7 @@ fi
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 if ! "$PYTHON_BIN" -c "import PyQt5" >/dev/null 2>&1; then
     echo "PyQt5 is not installed."
-    echo "Install the desktop dependencies with: $PYTHON_BIN -m pip install -r requirements.txt"
+    echo "Install the desktop dependencies with: $PYTHON_BIN -m pip install -r requirements-desktop.txt"
     exit 1
 fi
 
