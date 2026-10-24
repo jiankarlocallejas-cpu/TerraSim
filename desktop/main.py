@@ -1,491 +1,1441 @@
-"""
-TerraSim Desktop Application
-Cross-platform desktop app using Electron/Python
-"""
+"""Native TerraSim desktop workbench.
 
-import sys
-import os
+Scientific models live in backend services; this window handles desktop input, settings, and results.
+"""
+from __future__ import annotations
+
 import json
-import asyncio
-from pathlib import Path
-from typing import Dict, Any, Optional
+import sys
 
 import numpy as np
-import pandas as pd
-import geopandas as gpd
-import rasterio
-from PyQt5.QtWidgets import *
-from PyQt5.QtCore import *
-from PyQt5.QtGui import *
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.offline import plot
-import folium
-from folium import plugins
+from pathlib import Path
+from typing import Any, Optional
 
-# Import backend modules
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
-from main import ErosionEngine, ErosionInput, ErosionResult
+from PyQt5.QtCore import QThread, Qt
+from PyQt5.QtGui import QFont, QPixmap
+from backend.services.paper_model import (
+    estimate_reference_memory_bytes,
+    estimate_tiled_memory_bytes,
+)
+from backend.services.run_manifest import (
+    RunManifestError,
+    build_run_manifest,
+    load_run_manifest,
+    save_run_manifest,
+)
+from backend.services.raster_inputs import (
+    RasterInputError,
+    RasterMetadata,
+    alignment_errors,
+    inspect_geotiff,
+    require_aligned,
+    save_geotiff,
+)
+from desktop.simulation_worker import DesktopSimulationResult, SimulationWorker
+from desktop.raster_preview import RasterPreview
 
-class GISCanvas(QWidget):
-    """Advanced GIS visualization canvas using matplotlib and plotly"""
-    
-    def __init__(self):
-        super().__init__()
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
-        
-        # Create matplotlib figure
-        self.figure = plt.figure(figsize=(12, 8))
-        self.canvas = FigureCanvas(self.figure)
-        self.layout.addWidget(self.canvas)
-        
-        # Initialize plot
-        self.ax = self.figure.add_subplot(111)
-        self.setup_map()
-        
-    def setup_map(self):
-        """Setup base map"""
-        self.ax.set_title('TerraSim - GIS Visualization')
-        self.ax.set_xlabel('Longitude')
-        self.ax.set_ylabel('Latitude')
-        self.ax.grid(True, alpha=0.3)
-        
-    def add_raster_layer(self, raster_path: str):
-        """Add raster layer to map"""
-        with rasterio.open(raster_path) as src:
-            data = src.read(1)
-            extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
-            
-            self.ax.imshow(data, extent=extent, cmap='terrain', alpha=0.7)
-            self.canvas.draw()
-            
-    def add_vector_layer(self, vector_path: str):
-        """Add vector layer to map"""
-        gdf = gpd.read_file(vector_path)
-        gdf.plot(ax=self.ax, alpha=0.7, edgecolor='black')
-        self.canvas.draw()
-        
-    def add_erosion_results(self, results: ErosionResult):
-        """Visualize erosion results"""
-        # Create erosion risk map
-        risk_colors = {
-            'Low': '#00FF00',
-            'Moderate': '#FFFF00', 
-            'High': '#FF8C00',
-            'Severe': '#FF0000'
-        }
-        
-        # This would be implemented with actual spatial data
-        self.ax.set_title(f'Erosion Risk: {results.risk_category}')
-        self.ax.text(0.02, 0.98, f'Mean Loss: {results.mean_loss:.2f} tons/ha/year',
-                   transform=self.ax.transAxes, verticalalignment='top',
-                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        self.canvas.draw()
+from PyQt5.QtWidgets import (
+    QAction,
+    QApplication,
+    QFileDialog,
+    QFrame,
+    QDoubleSpinBox,
+    QComboBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QProgressBar,
+    QSlider,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
-class ErosionCalculator(QWidget):
-    """Erosion calculation panel"""
-    
-    def __init__(self, erosion_engine: ErosionEngine):
-        super().__init__()
-        self.erosion_engine = erosion_engine
-        self.setup_ui()
-        
-    def setup_ui(self):
-        layout = QFormLayout()
-        self.setLayout(layout)
-        
-        # Input fields
-        self.rainfall_input = QDoubleSpinBox()
-        self.rainfall_input.setRange(0, 5000)
-        self.rainfall_input.setValue(1800)
-        self.rainfall_input.setSuffix(" mm/year")
-        
-        self.slope_input = QDoubleSpinBox()
-        self.slope_input.setRange(0, 90)
-        self.slope_input.setValue(15)
-        self.slope_input.setSuffix(" degrees")
-        
-        self.slope_length_input = QDoubleSpinBox()
-        self.slope_length_input.setRange(0, 1000)
-        self.slope_length_input.setValue(100)
-        self.slope_length_input.setSuffix(" meters")
-        
-        self.soil_type_input = QComboBox()
-        self.soil_type_input.addItems(['clay', 'sandy', 'loam', 'silt', 'rocky'])
-        
-        self.vegetation_input = QSlider(Qt.Horizontal)
-        self.vegetation_input.setRange(0, 100)
-        self.vegetation_input.setValue(60)
-        self.vegetation_label = QLabel("60%")
-        
-        self.support_practices_input = QSlider(Qt.Horizontal)
-        self.support_practices_input.setRange(0, 100)
-        self.support_practices_input.setValue(50)
-        self.support_practices_label = QLabel("50%")
-        
-        self.land_use_input = QComboBox()
-        self.land_use_input.addItems(['forest', 'grassland', 'agriculture', 'urban', 'water', 'barren'])
-        
-        self.area_input = QDoubleSpinBox()
-        self.area_input.setRange(0, 10000)
-        self.area_input.setValue(10)
-        self.area_input.setSuffix(" hectares")
-        
-        self.seasonality_input = QComboBox()
-        self.seasonality_input.addItems(['dry', 'wet', 'transitional'])
-        
-        # Connect slider signals
-        self.vegetation_input.valueChanged.connect(
-            lambda v: self.vegetation_label.setText(f"{v}%"))
-        self.support_practices_input.valueChanged.connect(
-            lambda v: self.support_practices_label.setText(f"{v}%"))
-        
-        # Add fields to layout
-        layout.addRow("Annual Rainfall:", self.rainfall_input)
-        layout.addRow("Slope Angle:", self.slope_input)
-        layout.addRow("Slope Length:", self.slope_length_input)
-        layout.addRow("Soil Type:", self.soil_type_input)
-        layout.addRow("Vegetation Cover:", self.vegetation_input)
-        layout.addRow("", self.vegetation_label)
-        layout.addRow("Support Practices:", self.support_practices_input)
-        layout.addRow("", self.support_practices_label)
-        layout.addRow("Land Use:", self.land_use_input)
-        layout.addRow("Area:", self.area_input)
-        layout.addRow("Seasonality:", self.seasonality_input)
-        
-        # Calculate button
-        self.calculate_button = QPushButton("Calculate Erosion")
-        self.calculate_button.clicked.connect(self.calculate_erosion)
-        layout.addRow(self.calculate_button)
-        
-        # Results area
-        self.results_text = QTextEdit()
-        self.results_text.setReadOnly(True)
-        self.results_text.setMaximumHeight(200)
-        layout.addRow("Results:", self.results_text)
-        
-    def calculate_erosion(self):
-        """Calculate erosion using current inputs"""
-        try:
-            input_data = ErosionInput(
-                rainfall=self.rainfall_input.value(),
-                slope=self.slope_input.value(),
-                slope_length=self.slope_length_input.value(),
-                soil_type=self.soil_type_input.currentText(),
-                vegetation_cover=self.vegetation_input.value(),
-                support_practices=self.support_practices_input.value(),
-                land_use=self.land_use_input.currentText(),
-                area=self.area_input.value(),
-                seasonality=self.seasonality_input.currentText()
-            )
-            
-            results = self.erosion_engine.calculate_terrak_sim(input_data)
-            
-            # Display results
-            results_text = f"""
-Erosion Analysis Results
-=====================
 
-Risk Category: {results.risk_category}
-Mean Soil Loss: {results.mean_loss:.2f} tons/ha/year
-Peak Soil Loss: {results.peak_loss:.2f} tons/ha/year
-Total Soil Loss: {results.total_soil_loss:.2f} tons
-Confidence: {results.confidence:.1%}
+class ParameterControl(QWidget):
+    """A clearly labeled relative model control, not an uncalibrated coefficient."""
 
-Factors:
-- Rainfall Factor: {results.factors['rainfall_factor']:.3f}
-- Slope Factor: {results.factors['slope_factor']:.3f}
-- Soil Factor: {results.factors['soil_factor']:.3f}
-- Vegetation Factor: {results.factors['vegetation_factor']:.3f}
-- Land Use Factor: {results.factors['land_use_factor']:.3f}
-- Seasonality Factor: {results.factors['seasonality_factor']:.3f}
+    def __init__(self, title: str, description: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._value = 100
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 8)
 
-RUSLE Comparison:
-- RUSLE Soil Loss: {results.rusle_comparison['soil_loss']:.2f} tons/ha/year
-- Difference: {results.rusle_comparison['difference']:.2f} tons/ha/year
-- Percent Difference: {results.rusle_comparison['percent_difference']:.1f}%
-"""
-            
-            self.results_text.setText(results_text)
-            
-            # Emit results signal
-            self.parent().parent().erosion_results_calculated.emit(results)
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Calculation Error", str(e))
+        heading = QHBoxLayout()
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("sectionTitle")
+        self.value_label = QLabel("1.00×")
+        self.value_label.setObjectName("parameterValue")
+        heading.addWidget(self.title_label)
+        heading.addStretch(1)
+        heading.addWidget(self.value_label)
+        layout.addLayout(heading)
 
-class LayerManager(QWidget):
-    """GIS layer management panel"""
-    
-    layer_added = pyqtSignal(str, str)  # layer_id, layer_type
-    
-    def __init__(self):
-        super().__init__()
-        self.setup_ui()
-        self.layers = {}
-        
-    def setup_ui(self):
-        layout = QVBoxLayout()
-        self.setLayout(layout)
-        
-        # Layer list
-        self.layer_list = QListWidget()
-        layout.addWidget(QLabel("Layers:"))
-        layout.addWidget(self.layer_list)
-        
-        # Add layer buttons
-        button_layout = QHBoxLayout()
-        
-        self.add_raster_btn = QPushButton("Add Raster")
-        self.add_raster_btn.clicked.connect(self.add_raster_layer)
-        button_layout.addWidget(self.add_raster_btn)
-        
-        self.add_vector_btn = QPushButton("Add Vector")
-        self.add_vector_btn.clicked.connect(self.add_vector_layer)
-        button_layout.addWidget(self.add_vector_btn)
-        
-        layout.addLayout(button_layout)
-        
-        # Layer properties
-        self.opacity_slider = QSlider(Qt.Horizontal)
-        self.opacity_slider.setRange(0, 100)
-        self.opacity_slider.setValue(100)
-        self.opacity_label = QLabel("100%")
-        
-        self.opacity_slider.valueChanged.connect(
-            lambda v: self.opacity_label.setText(f"{v}%"))
-        
-        layout.addWidget(QLabel("Opacity:"))
-        layout.addWidget(self.opacity_slider)
-        layout.addWidget(self.opacity_label)
-        
-        # Remove button
-        self.remove_btn = QPushButton("Remove Layer")
-        self.remove_btn.clicked.connect(self.remove_layer)
-        layout.addWidget(self.remove_btn)
-        
-    def add_raster_layer(self):
-        """Add raster layer"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Raster File", "", 
-            "Raster Files (*.tif *.tiff *.img *.dem);;All Files (*)")
-        
-        if file_path:
-            layer_id = f"raster_{len(self.layers)}"
-            self.layers[layer_id] = {
-                'path': file_path,
-                'type': 'raster',
-                'name': Path(file_path).stem,
-                'visible': True,
-                'opacity': 100
-            }
-            
-            item = QListWidgetItem(self.layers[layer_id]['name'])
-            item.setData(Qt.UserRole, layer_id)
-            item.setCheckState(Qt.Checked)
-            self.layer_list.addItem(item)
-            
-            self.layer_added.emit(layer_id, 'raster')
-            
-    def add_vector_layer(self):
-        """Add vector layer"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Vector File", "",
-            "Vector Files (*.shp *.geojson *.kml *.gpkg);;All Files (*)")
-        
-        if file_path:
-            layer_id = f"vector_{len(self.layers)}"
-            self.layers[layer_id] = {
-                'path': file_path,
-                'type': 'vector',
-                'name': Path(file_path).stem,
-                'visible': True,
-                'opacity': 100
-            }
-            
-            item = QListWidgetItem(self.layers[layer_id]['name'])
-            item.setData(Qt.UserRole, layer_id)
-            item.setCheckState(Qt.Checked)
-            self.layer_list.addItem(item)
-            
-            self.layer_added.emit(layer_id, 'vector')
-            
-    def remove_layer(self):
-        """Remove selected layer"""
-        current_item = self.layer_list.currentItem()
-        if current_item:
-            layer_id = current_item.data(Qt.UserRole)
-            del self.layers[layer_id]
-            self.layer_list.takeItem(self.layer_list.row(current_item))
+        self.description_label = QLabel(description)
+        self.description_label.setWordWrap(True)
+        self.description_label.setObjectName("muted")
+        layout.addWidget(self.description_label)
+
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(10, 300)
+        self.slider.setValue(100)
+        self.slider.valueChanged.connect(self._update_value)
+        layout.addWidget(self.slider)
+
+        bounds = QHBoxLayout()
+        bounds.addWidget(QLabel("0.10×"))
+        bounds.addStretch(1)
+        bounds.addWidget(QLabel("3.00×"))
+        layout.addLayout(bounds)
+
+    def _update_value(self, value: int) -> None:
+        self._value = value
+        self.value_label.setText(f"{value / 100:.2f}×")
+
+    @property
+    def multiplier(self) -> float:
+        return self._value / 100.0
+
+    def set_multiplier(self, value: float) -> None:
+        bounded = min(3.0, max(0.1, float(value)))
+        self.slider.setValue(round(bounded * 100))
+
 
 class TerraSimDesktop(QMainWindow):
-    """Main TerraSim desktop application"""
-    
-    erosion_results_calculated = pyqtSignal(object)
-    
-    def __init__(self):
-        super().__init__()
-        self.erosion_engine = ErosionEngine()
-        self.setup_ui()
-        self.setup_connections()
-        
-    def setup_ui(self):
-        self.setWindowTitle("TerraSim - Advanced GIS Erosion Modeling")
-        self.setGeometry(100, 100, 1400, 900)
-        
-        # Create central widget
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        # Main layout
-        main_layout = QHBoxLayout()
-        central_widget.setLayout(main_layout)
-        
-        # Left panel - Layer manager
-        self.layer_manager = LayerManager()
-        self.layer_manager.setMaximumWidth(300)
-        main_layout.addWidget(self.layer_manager)
-        
-        # Center - GIS Canvas
-        self.gis_canvas = GISCanvas()
-        main_layout.addWidget(self.gis_canvas, 1)
-        
-        # Right panel - Erosion calculator
-        self.erosion_calculator = ErosionCalculator(self.erosion_engine)
-        self.erosion_calculator.setMaximumWidth(400)
-        main_layout.addWidget(self.erosion_calculator)
-        
-        # Create menu bar
-        self.create_menu_bar()
-        
-        # Create status bar
-        self.status_bar = self.statusBar()
-        self.status_bar.showMessage("Ready")
-        
-    def create_menu_bar(self):
-        menubar = self.menuBar()
-        
-        # File menu
-        file_menu = menubar.addMenu('File')
-        
-        open_project_action = QAction('Open Project', self)
-        open_project_action.setShortcut('Ctrl+O')
-        open_project_action.triggered.connect(self.open_project)
-        file_menu.addAction(open_project_action)
-        
-        save_project_action = QAction('Save Project', self)
-        save_project_action.setShortcut('Ctrl+S')
-        save_project_action.triggered.connect(self.save_project)
-        file_menu.addAction(save_project_action)
-        
-        file_menu.addSeparator()
-        
-        exit_action = QAction('Exit', self)
-        exit_action.setShortcut('Ctrl+Q')
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-        
-        # Tools menu
-        tools_menu = menubar.addMenu('Tools')
-        
-        import_data_action = QAction('Import GIS Data', self)
-        import_data_action.triggered.connect(self.import_gis_data)
-        tools_menu.addAction(import_data_action)
-        
-        export_results_action = QAction('Export Results', self)
-        export_results_action.triggered.connect(self.export_results)
-        tools_menu.addAction(export_results_action)
-        
-        # Help menu
-        help_menu = menubar.addMenu('Help')
-        
-        about_action = QAction('About TerraSim', self)
-        about_action.triggered.connect(self.show_about)
-        help_menu.addAction(about_action)
-        
-    def setup_connections(self):
-        """Setup signal connections"""
-        self.erosion_results_calculated.connect(self.on_erosion_results)
-        self.layer_manager.layer_added.connect(self.on_layer_added)
-        
-    def on_erosion_results(self, results: ErosionResult):
-        """Handle erosion calculation results"""
-        self.gis_canvas.add_erosion_results(results)
-        self.status_bar.showMessage(f"Erosion calculated: {results.risk_category} risk")
-        
-    def on_layer_added(self, layer_id: str, layer_type: str):
-        """Handle layer addition"""
-        layer_info = self.layer_manager.layers[layer_id]
-        
-        if layer_type == 'raster':
-            self.gis_canvas.add_raster_layer(layer_info['path'])
-        elif layer_type == 'vector':
-            self.gis_canvas.add_vector_layer(layer_info['path'])
-            
-        self.status_bar.showMessage(f"Added {layer_type} layer: {layer_info['name']}")
-        
-    def open_project(self):
-        """Open project file"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Project", "", "JSON Files (*.json);;All Files (*)")
-        
-        if file_path:
-            # Load project logic here
-            self.status_bar.showMessage(f"Project opened: {file_path}")
-            
-    def save_project(self):
-        """Save project file"""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Project", "", "JSON Files (*.json);;All Files (*)")
-        
-        if file_path:
-            # Save project logic here
-            self.status_bar.showMessage(f"Project saved: {file_path}")
-            
-    def import_gis_data(self):
-        """Import GIS data"""
-        # This would open a more sophisticated data import dialog
-        self.status_bar.showMessage("GIS data import feature")
-        
-    def export_results(self):
-        """Export analysis results"""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export Results", "", 
-            "PDF Files (*.pdf);;CSV Files (*.csv);;JSON Files (*.json);;All Files (*)")
-        
-        if file_path:
-            # Export logic here
-            self.status_bar.showMessage(f"Results exported: {file_path}")
-            
-    def show_about(self):
-        """Show about dialog"""
-        QMessageBox.about(self, "About TerraSim", 
-                         "TerraSim v2.0.0\n\n"
-                         "Advanced GIS Erosion Modeling Platform\n\n"
-                         "Built with:\n"
-                         "- Python\n"
-                         "- PyQt5\n"
-                         "- GeoPandas\n"
-                         "- Rasterio\n"
-                         "- NumPy\n"
-                         "- SciPy")
+    """Main window for TerraSim's native Qt desktop application."""
 
-def main():
-    """Main entry point for desktop application"""
+    PAGES = ("Overview", "Input Data", "Model Settings", "Scenarios", "Results")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.project_path: Path | None = None
+        self.layers: list[dict[str, Any]] = []
+        self._simulation_thread: QThread | None = None
+        self._simulation_worker: SimulationWorker | None = None
+        self._last_result: DesktopSimulationResult | None = None
+        self._last_manifest: dict[str, Any] | None = None
+        self._last_manifest_path: Path | None = None
+        self._last_output_paths: dict[str, str | None] = {
+            "elevation": None,
+            "susceptibility": None,
+        }
+        self._close_when_simulation_finishes = False
+        self._build_window()
+        self._build_menu()
+        self._show_page(0)
+
+    def _build_window(self) -> None:
+        self.setWindowTitle("TerraSim")
+        self.resize(1440, 900)
+        self.setMinimumSize(1080, 680)
+
+        root = QWidget()
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(230)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(18, 24, 18, 18)
+        sidebar_layout.setSpacing(8)
+
+        brand = QLabel("TerraSim")
+        brand.setObjectName("brand")
+        sidebar_layout.addWidget(brand)
+        subtitle = QLabel("SOIL EROSION WORKBENCH")
+        subtitle.setObjectName("eyebrow")
+        sidebar_layout.addWidget(subtitle)
+        sidebar_layout.addSpacing(28)
+
+        self.navigation = QListWidget()
+        self.navigation.setObjectName("navigation")
+        for page in self.PAGES:
+            self.navigation.addItem(QListWidgetItem(page))
+        self.navigation.currentRowChanged.connect(self._show_page)
+        sidebar_layout.addWidget(self.navigation, 1)
+
+        sidebar_note = QLabel("Desktop edition\nQt · GIS · Terrain modeling")
+        sidebar_note.setObjectName("muted")
+        sidebar_layout.addWidget(sidebar_note)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(32, 24, 32, 20)
+        content_layout.setSpacing(18)
+
+        topbar = QHBoxLayout()
+        self.breadcrumb = QLabel("Overview")
+        self.breadcrumb.setObjectName("pageTitle")
+        topbar.addWidget(self.breadcrumb)
+        topbar.addStretch(1)
+        self.project_label = QLabel("Untitled project")
+        self.project_label.setObjectName("muted")
+        topbar.addWidget(self.project_label)
+        content_layout.addLayout(topbar)
+
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self._overview_page())
+        self.pages.addWidget(self._data_page())
+        self.pages.addWidget(self._model_page())
+        self.pages.addWidget(self._placeholder_page(
+            "Scenario comparison",
+            "Set up baseline, rainfall, and vegetation scenarios after the model inputs are loaded.",
+        ))
+        self.pages.addWidget(self._results_page())
+        content_layout.addWidget(self.pages, 1)
+
+        self.statusBar().showMessage("Ready")
+        root_layout.addWidget(sidebar)
+        root_layout.addWidget(content, 1)
+        self.setCentralWidget(root)
+        self.setStyleSheet(self._stylesheet())
+
+    def _overview_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        intro = QFrame()
+        intro.setObjectName("hero")
+        intro_layout = QVBoxLayout(intro)
+        intro_layout.setContentsMargins(26, 24, 26, 24)
+        title = QLabel("A fresh workspace for terrain and erosion analysis")
+        title.setObjectName("heroTitle")
+        intro_layout.addWidget(title)
+        copy = QLabel(
+            "Start with a DEM and supporting soil, rainfall, and land-cover data. "
+            "TerraSim will keep data preparation, model settings, scenarios, and results together."
+        )
+        copy.setWordWrap(True)
+        copy.setObjectName("muted")
+        intro_layout.addWidget(copy)
+        open_data = QPushButton("Add input data")
+        open_data.setObjectName("primaryButton")
+        open_data.clicked.connect(lambda: self.navigation.setCurrentRow(1))
+        intro_layout.addWidget(open_data, 0, Qt.AlignLeft)
+        layout.addWidget(intro)
+
+        cards = QHBoxLayout()
+        cards.addWidget(self._stat_card("INPUT LAYERS", "0", "DEM, soil, rainfall, cover"))
+        cards.addWidget(self._stat_card("SCENARIOS", "0", "Baseline and alternatives"))
+        cards.addWidget(self._stat_card("MODEL STATUS", "Not run", "Configure inputs first"))
+        layout.addLayout(cards)
+
+        note = QFrame()
+        note.setObjectName("notice")
+        note_layout = QVBoxLayout(note)
+        note_layout.setContentsMargins(20, 16, 20, 16)
+        note_title = QLabel("Model parameters will be explicit")
+        note_title.setObjectName("sectionTitle")
+        note_body = QLabel(
+            "The paper's transport coefficients are not yet calibrated from the available files. "
+            "The interface will distinguish source-based soil suggestions from user-adjustable "
+            "α and β controls, and will identify provisional settings."
+        )
+        note_body.setWordWrap(True)
+        note_body.setObjectName("muted")
+        note_layout.addWidget(note_title)
+        note_layout.addWidget(note_body)
+        layout.addWidget(note)
+        layout.addStretch(1)
+        return page
+
+    def _data_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        description = QLabel(
+            "Add GeoTIFF rasters. TerraSim checks spatial metadata before reading pixel data, "
+            "so adding a large file does not load it into memory."
+        )
+        description.setWordWrap(True)
+        description.setObjectName("muted")
+        layout.addWidget(description)
+
+        actions = QHBoxLayout()
+        add_button = QPushButton("Add GeoTIFF")
+        add_button.setObjectName("primaryButton")
+        add_button.clicked.connect(self._add_data_files)
+        actions.addWidget(add_button)
+        self.set_dem_button = QPushButton("Set as DEM")
+        self.set_dem_button.clicked.connect(lambda: self._set_layer_role("elevation"))
+        actions.addWidget(self.set_dem_button)
+        self.set_criterion_button = QPushButton("Set as criterion")
+        self.set_criterion_button.clicked.connect(lambda: self._set_layer_role("criterion"))
+        actions.addWidget(self.set_criterion_button)
+        remove_button = QPushButton("Remove selected")
+        remove_button.clicked.connect(self._remove_selected_layer)
+        actions.addWidget(remove_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        self.layer_list = QListWidget()
+        self.layer_list.setObjectName("layerList")
+        self.layer_list.currentRowChanged.connect(self._update_layer_actions)
+        layout.addWidget(self.layer_list, 1)
+
+        weight_row = QHBoxLayout()
+        weight_label = QLabel(
+            "Selected criterion weight · all criterion weights must sum to 1.0000"
+        )
+        weight_label.setObjectName("muted")
+        weight_row.addWidget(weight_label)
+        self.criterion_weight_control = QDoubleSpinBox()
+        self.criterion_weight_control.setDecimals(4)
+        self.criterion_weight_control.setRange(0.0, 1.0)
+        self.criterion_weight_control.setSingleStep(0.05)
+        self.criterion_weight_control.setEnabled(False)
+        self.criterion_weight_control.valueChanged.connect(self._update_selected_weight)
+        weight_row.addWidget(self.criterion_weight_control)
+        layout.addLayout(weight_row)
+
+        self.data_hint = QLabel()
+        self.data_hint.setWordWrap(True)
+        self.data_hint.setObjectName("muted")
+        layout.addWidget(self.data_hint)
+        self._refresh_layer_list()
+        return page
+
+    def _model_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        intro = QLabel(
+            "The Python reference solver evolves terrain by sediment-flux divergence. "
+            "Enter coefficients and time units from a calibration or mark them as exploratory. "
+            "The paper does not provide a validated soil-to-α/β conversion."
+        )
+        intro.setWordWrap(True)
+        intro.setObjectName("muted")
+        layout.addWidget(intro)
+
+        def numeric_input(value: float, step: float, decimals: int = 6) -> QDoubleSpinBox:
+            control = QDoubleSpinBox()
+            control.setDecimals(decimals)
+            control.setRange(0.0, 1e12)
+            control.setSingleStep(step)
+            control.setValue(value)
+            return control
+
+        coefficients = QFrame()
+        coefficients.setObjectName("panel")
+        coefficient_layout = QVBoxLayout(coefficients)
+        coefficient_layout.setContentsMargins(22, 18, 22, 18)
+        coefficient_layout.setSpacing(8)
+        coefficient_title = QLabel("Transport coefficients")
+        coefficient_title.setObjectName("sectionTitle")
+        coefficient_layout.addWidget(coefficient_title)
+        coefficient_form = QFormLayout()
+        self.alpha_base_spin = numeric_input(0.0, 0.01, 8)
+        self.beta_base_spin = numeric_input(0.0, 0.01, 8)
+        coefficient_form.addRow("Base α value · user supplied", self.alpha_base_spin)
+        coefficient_form.addRow("Base β value · user supplied", self.beta_base_spin)
+        coefficient_layout.addLayout(coefficient_form)
+        self.alpha_control = ParameterControl(
+            "α sensitivity multiplier",
+            "Exploratory multiplier applied to the base coefficient above.",
+        )
+        self.beta_control = ParameterControl(
+            "β sensitivity multiplier",
+            "Exploratory multiplier applied to the base coefficient above.",
+        )
+        coefficient_layout.addWidget(self.alpha_control)
+        coefficient_layout.addWidget(self.beta_control)
+        layout.addWidget(coefficients)
+
+        physics = QFrame()
+        physics.setObjectName("panel")
+        physics_layout = QVBoxLayout(physics)
+        physics_layout.setContentsMargins(22, 18, 22, 18)
+        physics_title = QLabel("Terrain transport")
+        physics_title.setObjectName("sectionTitle")
+        physics_layout.addWidget(physics_title)
+        physics_form = QFormLayout()
+        self.critical_slope_spin = numeric_input(0.0, 0.001, 8)
+        self.d_xx_spin = numeric_input(1.0, 0.05, 6)
+        self.d_xy_spin = QDoubleSpinBox()
+        self.d_xy_spin.setDecimals(6)
+        self.d_xy_spin.setRange(-1e6, 1e6)
+        self.d_xy_spin.setSingleStep(0.05)
+        self.d_xy_spin.setValue(0.0)
+        self.d_yy_spin = numeric_input(1.0, 0.05, 6)
+        physics_form.addRow("Critical slope term Sᶜ", self.critical_slope_spin)
+        physics_form.addRow("Diffusion tensor Dₓₓ", self.d_xx_spin)
+        physics_form.addRow("Diffusion tensor Dₓᵧ", self.d_xy_spin)
+        physics_form.addRow("Diffusion tensor Dᵧᵧ", self.d_yy_spin)
+        physics_layout.addLayout(physics_form)
+        physics_note = QLabel(
+            "D is dimensionless here. The identity tensor is an explicit starting assumption; "
+            "adjust it only with a sourced rationale."
+        )
+        physics_note.setWordWrap(True)
+        physics_note.setObjectName("muted")
+        physics_layout.addWidget(physics_note)
+        layout.addWidget(physics)
+
+        run_panel = QFrame()
+        run_panel.setObjectName("panel")
+        run_layout = QVBoxLayout(run_panel)
+        run_layout.setContentsMargins(22, 18, 22, 18)
+        run_title = QLabel("Run controls")
+        run_title.setObjectName("sectionTitle")
+        run_layout.addWidget(run_title)
+        run_form = QFormLayout()
+        self.total_time_spin = numeric_input(1.0, 0.1, 6)
+        self.max_timestep_spin = numeric_input(0.1, 0.01, 8)
+        self.cfl_spin = QDoubleSpinBox()
+        self.cfl_spin.setDecimals(3)
+        self.cfl_spin.setRange(0.001, 1.0)
+        self.cfl_spin.setSingleStep(0.05)
+        self.cfl_spin.setValue(0.25)
+        self.memory_budget_spin = QDoubleSpinBox()
+        self.memory_budget_spin.setDecimals(0)
+        self.memory_budget_spin.setRange(64, 65536)
+        self.memory_budget_spin.setSingleStep(128)
+        self.memory_budget_spin.setValue(512)
+        self.memory_budget_spin.setSuffix(" MiB")
+        self.compute_mode_combo = QComboBox()
+        self.compute_mode_combo.addItem("Automatic - tile when needed", "auto")
+        self.compute_mode_combo.addItem("Full grid - faster, more memory", "full")
+        for tile_size in (256, 512, 1024):
+            self.compute_mode_combo.addItem(
+                f"Tiled windows - {tile_size} x {tile_size}", tile_size
+            )
+        run_form.addRow("Processing mode", self.compute_mode_combo)
+        run_form.addRow("Total duration · model time units", self.total_time_spin)
+        run_form.addRow("Maximum time step", self.max_timestep_spin)
+        run_form.addRow("CFL safety factor", self.cfl_spin)
+        run_form.addRow("Memory budget · approximate", self.memory_budget_spin)
+        run_layout.addLayout(run_form)
+
+        actions = QHBoxLayout()
+        self.run_button = QPushButton("Run terrain simulation")
+        self.run_button.setObjectName("primaryButton")
+        self.run_button.clicked.connect(self._start_simulation)
+        actions.addWidget(self.run_button)
+        self.cancel_button = QPushButton("Cancel run")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._cancel_simulation)
+        actions.addWidget(self.cancel_button)
+        actions.addStretch(1)
+        run_layout.addLayout(actions)
+        self.run_progress = QProgressBar()
+        self.run_progress.setRange(0, 100)
+        self.run_progress.setValue(0)
+        run_layout.addWidget(self.run_progress)
+        self.run_status = QLabel("No simulation run yet.")
+        self.run_status.setWordWrap(True)
+        self.run_status.setObjectName("muted")
+        run_layout.addWidget(self.run_status)
+        layout.addWidget(run_panel)
+        layout.addStretch(1)
+        return page
+
+    def _results_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        summary_panel = QFrame()
+        summary_panel.setObjectName("panel")
+        summary_layout = QVBoxLayout(summary_panel)
+        summary_layout.setContentsMargins(24, 22, 24, 22)
+        heading = QLabel("Latest run")
+        heading.setObjectName("sectionTitle")
+        summary_layout.addWidget(heading)
+        self.results_summary = QLabel(
+            "No results yet. Load a DEM and configure a reference run in Model Settings."
+        )
+        self.results_summary.setWordWrap(True)
+        self.results_summary.setObjectName("muted")
+        summary_layout.addWidget(self.results_summary)
+        layout.addWidget(summary_panel)
+
+        preview_panel = QFrame()
+        preview_panel.setObjectName("panel")
+        preview_layout = QHBoxLayout(preview_panel)
+        preview_layout.setContentsMargins(18, 16, 18, 16)
+        preview_layout.setSpacing(18)
+        (
+            elevation_column,
+            self.elevation_preview_image,
+            self.elevation_preview_caption,
+        ) = self._preview_column(
+            "Final elevation", "Run a simulation to preview the elevation raster."
+        )
+        (
+            susceptibility_column,
+            self.susceptibility_preview_image,
+            self.susceptibility_preview_caption,
+        ) = self._preview_column(
+            "Susceptibility index",
+            "A criterion overlay is required to calculate susceptibility.",
+        )
+        preview_layout.addLayout(elevation_column, 1)
+        preview_layout.addLayout(susceptibility_column, 1)
+        layout.addWidget(preview_panel)
+
+        exports = QHBoxLayout()
+        self.export_elevation_button = QPushButton("Export final elevation GeoTIFF")
+        self.export_elevation_button.clicked.connect(self._export_elevation)
+        self.export_elevation_button.setEnabled(False)
+        exports.addWidget(self.export_elevation_button)
+        self.export_susceptibility_button = QPushButton("Export susceptibility GeoTIFF")
+        self.export_susceptibility_button.clicked.connect(self._export_susceptibility)
+        self.export_susceptibility_button.setEnabled(False)
+        exports.addWidget(self.export_susceptibility_button)
+        self.save_run_record_button = QPushButton("Save run record…")
+        self.save_run_record_button.clicked.connect(self._save_run_record)
+        self.save_run_record_button.setEnabled(False)
+        exports.addWidget(self.save_run_record_button)
+        self.open_run_record_button = QPushButton("Open run record…")
+        self.open_run_record_button.clicked.connect(self._open_run_record)
+        exports.addWidget(self.open_run_record_button)
+        exports.addStretch(1)
+        layout.addLayout(exports)
+        layout.addStretch(1)
+        return page
+
+    @staticmethod
+    def _preview_column(
+        title: str,
+        initial_caption: str,
+    ) -> tuple[QVBoxLayout, QLabel, QLabel]:
+        column = QVBoxLayout()
+        heading = QLabel(title)
+        heading.setObjectName("sectionTitle")
+        column.addWidget(heading)
+        image = QLabel("Preview is sampled for display")
+        image.setAlignment(Qt.AlignCenter)
+        image.setMinimumSize(320, 220)
+        image.setObjectName("rasterPreview")
+        column.addWidget(image, 1)
+        caption = QLabel(initial_caption)
+        caption.setWordWrap(True)
+        caption.setObjectName("muted")
+        column.addWidget(caption)
+        note = QLabel("Downsampled display · export GeoTIFF for full resolution")
+        note.setWordWrap(True)
+        note.setObjectName("muted")
+        column.addWidget(note)
+        return column, image, caption
+
+    def _start_simulation(self) -> None:
+        if self._simulation_thread is not None and self._simulation_thread.isRunning():
+            return
+        dems = [
+            layer
+            for layer in self.layers
+            if layer.get("valid") and layer.get("role") == "elevation"
+        ]
+        if len(dems) != 1:
+            QMessageBox.warning(
+                self,
+                "DEM required",
+                "Assign exactly one valid projected GeoTIFF as the DEM before running.",
+            )
+            return
+        dem = dems[0]
+        criteria = [
+            layer
+            for layer in self.layers
+            if layer.get("valid") and layer.get("role") == "criterion"
+        ]
+        try:
+            dem_metadata = self._metadata_for_layer(dem)
+            for layer in criteria:
+                require_aligned(dem_metadata, self._metadata_for_layer(layer))
+            if criteria:
+                weight_sum = sum(float(layer.get("weight", 0.0)) for layer in criteria)
+                if abs(weight_sum - 1.0) > 1e-9:
+                    raise ValueError(
+                        f"criterion weights sum to {weight_sum:.4f}; set the total to 1.0000"
+                    )
+        except (RasterInputError, TypeError, ValueError) as exc:
+            QMessageBox.warning(self, "Input validation failed", str(exc))
+            return
+
+        budget = int(self.memory_budget_spin.value() * 2**20)
+        full_grid_estimate = estimate_reference_memory_bytes(
+            dem_metadata.width,
+            dem_metadata.height,
+            criterion_count=len(criteria),
+        )
+        selected_mode = self.compute_mode_combo.currentData()
+        tile_shape: Optional[tuple[int, int]] = None
+        if selected_mode == "auto":
+            estimated = full_grid_estimate
+            if estimated > budget:
+                for tile_size in (1024, 512, 256):
+                    tiled_estimate = estimate_tiled_memory_bytes(
+                        dem_metadata.width,
+                        dem_metadata.height,
+                        criterion_count=len(criteria),
+                        tile_shape=(tile_size, tile_size),
+                    )
+                    if tiled_estimate <= budget:
+                        tile_shape = (tile_size, tile_size)
+                        estimated = tiled_estimate
+                        break
+                else:
+                    estimated = estimate_tiled_memory_bytes(
+                        dem_metadata.width,
+                        dem_metadata.height,
+                        criterion_count=len(criteria),
+                        tile_shape=(256, 256),
+                    )
+                    tile_shape = (256, 256)
+        elif selected_mode == "full":
+            estimated = full_grid_estimate
+        else:
+            tile_size = int(selected_mode)
+            tile_shape = (tile_size, tile_size)
+            estimated = estimate_tiled_memory_bytes(
+                dem_metadata.width,
+                dem_metadata.height,
+                criterion_count=len(criteria),
+                tile_shape=tile_shape,
+            )
+
+        if estimated > budget:
+            QMessageBox.warning(
+                self,
+                "Memory budget exceeded",
+                f"The selected processing mode estimates {estimated / 2**20:.0f} MiB "
+                f"of working memory, above the selected {budget / 2**20:.0f} MiB budget. "
+                "Choose Automatic or a smaller tile, a smaller raster, or a larger budget.",
+            )
+            return
+        compute_mode = (
+            "full-grid"
+            if tile_shape is None
+            else f"tiled-{tile_shape[0]}x{tile_shape[1]}"
+        )
+
+        settings = {
+            "alpha": self.alpha_base_spin.value() * self.alpha_control.multiplier,
+            "beta": self.beta_base_spin.value() * self.beta_control.multiplier,
+            "alpha_base": self.alpha_base_spin.value(),
+            "beta_base": self.beta_base_spin.value(),
+            "alpha_multiplier": self.alpha_control.multiplier,
+            "beta_multiplier": self.beta_control.multiplier,
+            "critical_slope_threshold": self.critical_slope_spin.value(),
+            "d_xx": self.d_xx_spin.value(),
+            "d_xy": self.d_xy_spin.value(),
+            "d_yy": self.d_yy_spin.value(),
+            "cfl": self.cfl_spin.value(),
+            "total_time": self.total_time_spin.value(),
+            "max_timestep": self.max_timestep_spin.value(),
+            "compute_mode": compute_mode,
+        }
+        self._last_result = None
+        self.export_elevation_button.setEnabled(False)
+        self.export_susceptibility_button.setEnabled(False)
+        self._clear_raster_previews()
+        self.run_progress.setValue(0)
+        self.run_status.setText(
+            f"Loading {dem['name']} · estimated reference working memory "
+            f"{estimated / 2**20:.1f} MiB."
+        )
+        self.statusBar().showMessage("Simulation started")
+
+        thread = QThread(self)
+        worker = SimulationWorker(
+            dem,
+            criteria,
+            settings,
+            memory_budget_bytes=budget,
+            tile_shape=tile_shape,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._update_simulation_progress)
+        worker.succeeded.connect(self._simulation_completed)
+        worker.failed.connect(self._simulation_failed)
+        worker.cancelled.connect(self._simulation_cancelled)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._simulation_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._simulation_thread = thread
+        self._simulation_worker = worker
+        self.run_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        thread.start()
+
+    def _cancel_simulation(self) -> None:
+        if self._simulation_thread is not None and self._simulation_thread.isRunning():
+            self._simulation_thread.requestInterruption()
+            self.cancel_button.setEnabled(False)
+            self.run_status.setText("Cancellation requested; stopping after the current step.")
+
+    def _update_simulation_progress(
+        self, percent: int, elapsed: float, timestep: float
+    ) -> None:
+        self.run_progress.setValue(percent)
+        self.run_status.setText(
+            f"Running · elapsed {elapsed:.6g} model time units · "
+            f"last step {timestep:.6g}"
+        )
+
+    def _simulation_completed(self, result: DesktopSimulationResult) -> None:
+        self._last_result = result
+        self._last_manifest = self._manifest_for_result(result)
+        self._last_manifest_path = None
+        self._last_output_paths = {"elevation": None, "susceptibility": None}
+        simulation = result.simulation
+        run_state = "Cancelled at requested checkpoint" if simulation.cancelled else "Completed"
+        susceptibility_text = "not calculated"
+        if result.susceptibility_index is not None:
+            valid_index = result.susceptibility_index[
+                np.isfinite(result.susceptibility_index)
+            ]
+            if valid_index.size:
+                susceptibility_text = (
+                    f"{result.criterion_count} criterion raster(s) · "
+                    f"range {float(np.min(valid_index)):.4f}–"
+                    f"{float(np.max(valid_index)):.4f}"
+                )
+        self.results_summary.setText(
+            f"{run_state}\n"
+            f"DEM: {Path(result.dem_path).name}\n"
+            f"Steps: {simulation.step_count} · elapsed: {simulation.elapsed_time:.6g} "
+            "model time units\n"
+            f"Smallest stability limit observed: {simulation.min_stable_timestep:.6g}\n"
+            f"Estimated working memory: {result.estimated_memory_bytes / 2**20:.1f} MiB\n"
+            f"Elevation-volume change: {simulation.mass_after - simulation.mass_before:.6g} "
+            "m³ under closed no-flux boundaries\n"
+            f"Maximum single-step elevation change: "
+            f"{simulation.max_abs_step_change:.6g} m\n"
+            f"Weighted susceptibility: {susceptibility_text}"
+        )
+        self.export_elevation_button.setEnabled(True)
+        self.export_susceptibility_button.setEnabled(
+            result.susceptibility_index is not None
+        )
+        self.save_run_record_button.setEnabled(True)
+        self._display_raster_preview(
+            self.elevation_preview_image,
+            self.elevation_preview_caption,
+            result.elevation_preview,
+            "m",
+        )
+        self._display_raster_preview(
+            self.susceptibility_preview_image,
+            self.susceptibility_preview_caption,
+            result.susceptibility_preview,
+            "index units",
+        )
+        self.run_status.setText(run_state)
+        self.statusBar().showMessage(run_state, 5000)
+        self.navigation.setCurrentRow(4)
+
+    def _simulation_failed(self, message: str) -> None:
+        self.run_status.setText(f"Run failed · {message}")
+        self.statusBar().showMessage("Simulation failed", 5000)
+        QMessageBox.warning(self, "Simulation failed", message)
+
+    def _simulation_cancelled(self) -> None:
+        self.run_status.setText("Cancelled before simulation began.")
+        self.statusBar().showMessage("Simulation cancelled", 5000)
+
+    def _simulation_thread_finished(self) -> None:
+        self.run_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self._simulation_thread = None
+        self._simulation_worker = None
+        if self._close_when_simulation_finishes:
+            self._close_when_simulation_finishes = False
+            self.close()
+
+    def closeEvent(self, event) -> None:
+        thread = self._simulation_thread
+        if thread is not None and thread.isRunning():
+            self._close_when_simulation_finishes = True
+            thread.requestInterruption()
+            self.cancel_button.setEnabled(False)
+            self.run_status.setText(
+                "Closing after cancellation at the current simulation checkpoint."
+            )
+            event.ignore()
+            return
+        event.accept()
+
+    def _export_elevation(self) -> None:
+        if self._last_result is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export final elevation", "", "GeoTIFF (*.tif)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith((".tif", ".tiff")):
+            path += ".tif"
+        try:
+            saved = save_geotiff(
+                self._last_result.dem_path,
+                path,
+                self._last_result.simulation.elevation,
+                self._last_result.simulation.valid_mask,
+            )
+            self._last_output_paths["elevation"] = saved
+            self._update_manifest_outputs()
+            self.statusBar().showMessage(f"Saved {Path(saved).name}", 5000)
+        except (OSError, RasterInputError) as exc:
+            QMessageBox.warning(self, "Could not export elevation", str(exc))
+
+    def _export_susceptibility(self) -> None:
+        if self._last_result is None or self._last_result.susceptibility_index is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export susceptibility index", "", "GeoTIFF (*.tif)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith((".tif", ".tiff")):
+            path += ".tif"
+        index = self._last_result.susceptibility_index
+        try:
+            saved = save_geotiff(
+                self._last_result.dem_path,
+                path,
+                index,
+                np.isfinite(index),
+            )
+            self._last_output_paths["susceptibility"] = saved
+            self._update_manifest_outputs()
+            self.statusBar().showMessage(f"Saved {Path(saved).name}", 5000)
+        except (OSError, RasterInputError) as exc:
+            QMessageBox.warning(self, "Could not export susceptibility", str(exc))
+
+    def _manifest_for_result(self, result: DesktopSimulationResult) -> dict[str, Any]:
+        simulation = result.simulation
+        susceptibility_range = None
+        if result.susceptibility_index is not None:
+            valid_index = result.susceptibility_index[
+                np.isfinite(result.susceptibility_index)
+            ]
+            if valid_index.size:
+                susceptibility_range = [
+                    float(np.min(valid_index)),
+                    float(np.max(valid_index)),
+                ]
+        stable_timestep = simulation.min_stable_timestep
+        diagnostics = {
+            "status": "cancelled" if simulation.cancelled else "completed",
+            "step_count": simulation.step_count,
+            "elapsed_time": simulation.elapsed_time,
+            "min_stable_timestep": (
+                stable_timestep if np.isfinite(stable_timestep) else None
+            ),
+            "estimated_memory_bytes": result.estimated_memory_bytes,
+            "mass_before_m3": simulation.mass_before,
+            "mass_after_m3": simulation.mass_after,
+            "mass_change_m3": simulation.mass_after - simulation.mass_before,
+            "max_abs_step_change_m": simulation.max_abs_step_change,
+            "susceptibility_range": susceptibility_range,
+            "criterion_count": result.criterion_count,
+        }
+        return build_run_manifest(
+            inputs=result.input_layers,
+            model_settings=result.model_settings,
+            diagnostics=diagnostics,
+            outputs=self._last_output_paths,
+            project_path=self.project_path,
+        )
+
+    def _save_run_record(self) -> None:
+        if self._last_result is not None:
+            self._last_manifest = self._manifest_for_result(self._last_result)
+        if self._last_manifest is None:
+            return
+        default_path = (
+            str(self._last_manifest_path) if self._last_manifest_path is not None else ""
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save TerraSim run record",
+            default_path,
+            "TerraSim run record (*.terrasim-run.json)",
+        )
+        if not path:
+            return
+        if not path.endswith(".terrasim-run.json"):
+            path += ".terrasim-run.json"
+        try:
+            saved = save_run_manifest(path, self._last_manifest)
+            self._last_manifest_path = Path(saved)
+            self.save_run_record_button.setEnabled(True)
+            self.statusBar().showMessage(f"Run record saved · {Path(saved).name}", 5000)
+        except (OSError, RunManifestError) as exc:
+            QMessageBox.warning(self, "Could not save run record", str(exc))
+
+    def _open_run_record(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open TerraSim run record",
+            "",
+            "TerraSim run record (*.terrasim-run.json *.json)",
+        )
+        if not path:
+            return
+        try:
+            manifest = load_run_manifest(path)
+        except (OSError, RunManifestError) as exc:
+            QMessageBox.warning(self, "Could not open run record", str(exc))
+            return
+
+        self._last_result = None
+        self._last_manifest = manifest
+        self._last_manifest_path = Path(path).resolve()
+        self._last_output_paths = dict(manifest["outputs"])
+        self.export_elevation_button.setEnabled(False)
+        self.export_susceptibility_button.setEnabled(False)
+        self.save_run_record_button.setEnabled(True)
+        self._clear_raster_previews(
+            "Re-run or load exported GeoTIFFs to display spatial previews."
+        )
+        self.results_summary.setText(self._format_run_manifest(manifest))
+        self.navigation.setCurrentRow(4)
+        self.statusBar().showMessage(f"Run record opened · {Path(path).name}", 5000)
+
+    @staticmethod
+    def _format_run_manifest(manifest: dict[str, Any]) -> str:
+        diagnostics = manifest["diagnostics"]
+        dem = next(layer for layer in manifest["inputs"] if layer["role"] == "elevation")
+        lines = [
+            "Saved run record · results arrays are not loaded from the record",
+            f"Created: {manifest['created_at']}",
+            f"DEM: {Path(dem['path']).name}",
+            f"Status: {diagnostics.get('status', 'unknown')}",
+            f"Steps: {diagnostics.get('step_count', 'unknown')} · elapsed: "
+            f"{diagnostics.get('elapsed_time', 'unknown')} model time units",
+            f"Coefficient provenance: {manifest['coefficient_provenance']}",
+        ]
+        stable_timestep = diagnostics.get("min_stable_timestep")
+        stable_text = "unbounded (zero transport response)" if stable_timestep is None else str(stable_timestep)
+        lines.append(f"Smallest stability limit observed: {stable_text}")
+        if "mass_change_m3" in diagnostics:
+            lines.append(f"Elevation-volume change: {diagnostics['mass_change_m3']} m³")
+        if "max_abs_step_change_m" in diagnostics:
+            lines.append(
+                f"Maximum single-step elevation change: "
+                f"{diagnostics['max_abs_step_change_m']} m"
+            )
+        settings = manifest["model_settings"]
+        lines.append(
+            "Transport settings: "
+            f"α={settings.get('alpha', 'unknown')}, β={settings.get('beta', 'unknown')}, "
+            f"Sᶜ={settings.get('critical_slope_threshold', 'unknown')}"
+        )
+        for name, output_path in manifest["outputs"].items():
+            state = "not exported" if output_path is None else output_path
+            lines.append(f"Output · {name}: {state}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _display_raster_preview(
+        image_label: QLabel,
+        caption_label: QLabel,
+        preview: RasterPreview | None,
+        units: str,
+    ) -> None:
+        if preview is None:
+            image_label.setPixmap(QPixmap())
+            image_label.setText("Not calculated")
+            caption_label.setText("No raster result was produced for this layer.")
+            return
+        pixmap = QPixmap.fromImage(preview.image).scaled(
+            480, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        image_label.setText("")
+        image_label.setPixmap(pixmap)
+        caption_label.setText(
+            f"Grid {preview.source_width} × {preview.source_height} · "
+            f"range {preview.minimum:.6g}–{preview.maximum:.6g} {units}"
+        )
+
+    def _clear_raster_previews(self, message: str = "No spatial result preview yet.") -> None:
+        self.elevation_preview_image.setPixmap(QPixmap())
+        self.elevation_preview_image.setText("Preview is sampled for display")
+        self.elevation_preview_caption.setText(message)
+        self.susceptibility_preview_image.setPixmap(QPixmap())
+        self.susceptibility_preview_image.setText("Preview is sampled for display")
+        self.susceptibility_preview_caption.setText(message)
+
+    def _update_manifest_outputs(self) -> None:
+        if self._last_manifest is None:
+            return
+        self._last_manifest["outputs"] = dict(self._last_output_paths)
+        if self._last_manifest_path is None:
+            return
+        try:
+            save_run_manifest(self._last_manifest_path, self._last_manifest)
+        except (OSError, RunManifestError) as exc:
+            QMessageBox.warning(
+                self,
+                "Could not update run record",
+                f"The GeoTIFF was exported, but the saved run record could not be updated: {exc}",
+            )
+
+    def _placeholder_page(self, title: str, copy: str) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(24, 24, 24, 24)
+        heading = QLabel(title)
+        heading.setObjectName("sectionTitle")
+        body = QLabel(copy)
+        body.setWordWrap(True)
+        body.setObjectName("muted")
+        panel_layout.addWidget(heading)
+        panel_layout.addWidget(body)
+        layout.addWidget(panel)
+        layout.addStretch(1)
+        return page
+
+    def _stat_card(self, label: str, value: str, detail: str) -> QFrame:
+        card = QFrame()
+        card.setObjectName("statCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 16, 18, 16)
+        eyebrow = QLabel(label)
+        eyebrow.setObjectName("eyebrow")
+        number = QLabel(value)
+        number.setObjectName("statValue")
+        caption = QLabel(detail)
+        caption.setObjectName("muted")
+        card_layout.addWidget(eyebrow)
+        card_layout.addWidget(number)
+        card_layout.addWidget(caption)
+        return card
+
+    def _build_menu(self) -> None:
+        file_menu = self.menuBar().addMenu("&File")
+        new_action = QAction("New Project", self)
+        new_action.setShortcut("Ctrl+N")
+        new_action.triggered.connect(self._new_project)
+        file_menu.addAction(new_action)
+        open_action = QAction("Open Project…", self)
+        open_action.setShortcut("Ctrl+O")
+        open_action.triggered.connect(self._open_project)
+        file_menu.addAction(open_action)
+        save_action = QAction("Save Project", self)
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self._save_project)
+        file_menu.addAction(save_action)
+        file_menu.addSeparator()
+        file_menu.addAction("Quit", self.close)
+
+    def _show_page(self, index: int) -> None:
+        if index < 0:
+            return
+        self.pages.setCurrentIndex(index)
+        self.breadcrumb.setText(self.PAGES[index])
+
+    def _add_data_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Add elevation or criterion GeoTIFFs",
+            "",
+            "GeoTIFF rasters (*.tif *.tiff);;All files (*)",
+        )
+        for path in paths:
+            self._register_raster_path(path)
+        if paths:
+            self.statusBar().showMessage(f"Inspected {len(paths)} raster file(s)", 5000)
+
+    def _register_raster_path(
+        self,
+        path: str,
+        preferred_role: str | None = None,
+        preferred_weight: float | None = None,
+    ) -> None:
+        resolved = (
+            str(path)
+            if str(path).startswith("/vsi")
+            else str(Path(path).expanduser().resolve())
+        )
+        if any(layer.get("path") == resolved for layer in self.layers):
+            return
+        layer: dict[str, Any] = {
+            "path": resolved,
+            "name": Path(resolved).name,
+            "role": "unassigned",
+            "valid": False,
+            "weight": 0.0,
+        }
+        try:
+            metadata = inspect_geotiff(resolved)
+            role = preferred_role if preferred_role in {"elevation", "criterion"} else None
+            if role is None:
+                role = (
+                    "elevation"
+                    if not any(
+                        item.get("valid") and item.get("role") == "elevation"
+                        for item in self.layers
+                    )
+                    else "criterion"
+                )
+            if role == "elevation":
+                for existing in self.layers:
+                    if existing.get("role") == "elevation":
+                        existing["role"] = "criterion"
+                        existing["weight"] = 0.0
+            layer.update(
+                {
+                    "role": role,
+                    "valid": True,
+                    "weight": (
+                        max(0.0, min(1.0, float(preferred_weight)))
+                        if role == "criterion" and preferred_weight is not None
+                        else 0.0
+                    ),
+                    "metadata": {
+                        "width": metadata.width,
+                        "height": metadata.height,
+                        "crs": metadata.crs,
+                        "transform": list(metadata.transform),
+                        "cell_size_x": metadata.cell_size_x,
+                        "cell_size_y": metadata.cell_size_y,
+                        "units": metadata.units,
+                        "nodata": metadata.nodata,
+                        "band": metadata.band,
+                        "dtype": metadata.dtype,
+                    },
+                }
+            )
+        except RasterInputError as exc:
+            layer["error"] = str(exc)
+        self.layers.append(layer)
+        self._refresh_layer_list()
+
+    @staticmethod
+    def _metadata_for_layer(layer: dict[str, Any]) -> RasterMetadata:
+        values = layer["metadata"]
+        return RasterMetadata(
+            path=layer["path"],
+            width=values["width"],
+            height=values["height"],
+            crs=values["crs"],
+            transform=tuple(values["transform"]),
+            cell_size_x=values["cell_size_x"],
+            cell_size_y=values["cell_size_y"],
+            units=values["units"],
+            nodata=values.get("nodata"),
+            band=values.get("band", 1),
+            dtype=values["dtype"],
+        )
+
+    def _refresh_layer_list(self) -> None:
+        if not hasattr(self, "layer_list"):
+            return
+        self.layer_list.clear()
+        dem = next(
+            (
+                layer
+                for layer in self.layers
+                if layer.get("valid") and layer.get("role") == "elevation"
+            ),
+            None,
+        )
+        for layer in self.layers:
+            if not layer.get("valid"):
+                label = f"Needs attention · {layer['name']} · {layer.get('error', 'invalid raster')}"
+            else:
+                metadata = self._metadata_for_layer(layer)
+                role = (
+                    "DEM"
+                    if layer.get("role") == "elevation"
+                    else f"Criterion · w={layer.get('weight', 0.0):.4f}"
+                )
+                label = (
+                    f"{role} · {layer['name']} · "
+                    f"{metadata.width} × {metadata.height} · "
+                    f"{metadata.cell_size_x:g} × {metadata.cell_size_y:g} m · "
+                    f"{metadata.crs}"
+                )
+                if dem is not None and layer.get("role") == "criterion":
+                    mismatches = alignment_errors(
+                        self._metadata_for_layer(dem), metadata
+                    )
+                    if mismatches:
+                        label += " · not aligned"
+            self.layer_list.addItem(QListWidgetItem(label))
+        self._update_layer_actions()
+
+        if dem is None:
+            self.data_hint.setText(
+                "No DEM assigned. Add a projected metric GeoTIFF and set one raster as the DEM."
+            )
+            return
+        dem_metadata = self._metadata_for_layer(dem)
+        mismatches = []
+        for layer in self.layers:
+            if layer.get("valid") and layer.get("role") == "criterion":
+                issues = alignment_errors(
+                    dem_metadata, self._metadata_for_layer(layer)
+                )
+                if issues:
+                    mismatches.append(f"{layer['name']}: {'; '.join(issues)}")
+        if mismatches:
+            self.data_hint.setText(
+                "DEM metadata is valid, but these criteria need matching CRS, dimensions, "
+                "and pixel alignment before they can be combined: "
+                + " | ".join(mismatches)
+            )
+        else:
+            criteria = [
+                layer
+                for layer in self.layers
+                if layer.get("valid") and layer.get("role") == "criterion"
+            ]
+            weight_sum = sum(float(layer.get("weight", 0.0)) for layer in criteria)
+            if criteria and abs(weight_sum - 1.0) > 1e-9:
+                criteria_status = (
+                    f"{len(criteria)} aligned criterion raster(s); weights sum "
+                    f"to {weight_sum:.4f} and must total 1.0000."
+                )
+            elif criteria:
+                criteria_status = (
+                    f"{len(criteria)} aligned criterion raster(s) with weights totaling 1.0000. "
+                    "Criterion values must already be normalized to [0, 1]."
+                )
+            else:
+                criteria_status = "No criteria assigned; the MCE overlay will be skipped."
+            self.data_hint.setText(
+                f"DEM ready · {dem_metadata.width} × {dem_metadata.height} cells · "
+                f"{dem_metadata.cell_size_x:g} × {dem_metadata.cell_size_y:g} m · "
+                f"{criteria_status} Reprojection and resampling are not automatic."
+            )
+
+    def _update_layer_actions(self, *_args: Any) -> None:
+        if not hasattr(self, "layer_list"):
+            return
+        row = self.layer_list.currentRow()
+        selected = 0 <= row < len(self.layers) and self.layers[row].get("valid", False)
+        self.set_dem_button.setEnabled(selected)
+        self.set_criterion_button.setEnabled(selected)
+        is_criterion = selected and self.layers[row].get("role") == "criterion"
+        self.criterion_weight_control.blockSignals(True)
+        self.criterion_weight_control.setEnabled(is_criterion)
+        self.criterion_weight_control.setValue(
+            float(self.layers[row].get("weight", 0.0)) if is_criterion else 0.0
+        )
+        self.criterion_weight_control.blockSignals(False)
+
+    def _set_layer_role(self, role: str) -> None:
+        row = self.layer_list.currentRow()
+        if not (0 <= row < len(self.layers)) or not self.layers[row].get("valid"):
+            return
+        if role == "elevation":
+            for layer in self.layers:
+                if layer.get("role") == "elevation":
+                    layer["role"] = "criterion"
+                    layer["weight"] = 0.0
+        self.layers[row]["role"] = role
+        if role == "criterion":
+            self.layers[row].setdefault("weight", 0.0)
+        elif role == "elevation":
+            self.layers[row]["weight"] = 0.0
+        self._refresh_layer_list()
+        self.layer_list.setCurrentRow(row)
+
+    def _update_selected_weight(self, value: float) -> None:
+        row = self.layer_list.currentRow()
+        if 0 <= row < len(self.layers) and self.layers[row].get("role") == "criterion":
+            self.layers[row]["weight"] = float(value)
+            self._refresh_layer_list()
+            self.layer_list.setCurrentRow(row)
+
+    def _remove_selected_layer(self) -> None:
+        row = self.layer_list.currentRow()
+        if row < 0:
+            return
+        self.layer_list.takeItem(row)
+        del self.layers[row]
+        self._refresh_layer_list()
+
+    def _new_project(self) -> None:
+        self.project_path = None
+        self.layers.clear()
+        self.layer_list.clear()
+        self.alpha_control.set_multiplier(1.0)
+        self.beta_control.set_multiplier(1.0)
+        self.alpha_base_spin.setValue(0.0)
+        self.beta_base_spin.setValue(0.0)
+        self.critical_slope_spin.setValue(0.0)
+        self.d_xx_spin.setValue(1.0)
+        self.d_xy_spin.setValue(0.0)
+        self.d_yy_spin.setValue(1.0)
+        self.total_time_spin.setValue(1.0)
+        self.max_timestep_spin.setValue(0.1)
+        self.cfl_spin.setValue(0.25)
+        self.memory_budget_spin.setValue(512)
+        self.compute_mode_combo.setCurrentIndex(0)
+        self.project_label.setText("Untitled project")
+        self._refresh_layer_list()
+        self.statusBar().showMessage("New project", 3000)
+
+    def _open_project(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open TerraSim project", "", "TerraSim project (*.terrasim.json *.json)"
+        )
+        if not path:
+            return
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+            saved_layers = list(payload.get("layers", []))
+            self.layers.clear()
+            self.layer_list.clear()
+            for layer in saved_layers:
+                if layer.get("path"):
+                    self._register_raster_path(
+                        layer["path"],
+                        preferred_role=layer.get("role"),
+                        preferred_weight=layer.get("weight"),
+                    )
+            controls = payload.get("model_controls", {})
+            if isinstance(controls, dict):
+                self.alpha_control.set_multiplier(controls.get("alpha_multiplier", 1.0))
+                self.beta_control.set_multiplier(controls.get("beta_multiplier", 1.0))
+                self.alpha_base_spin.setValue(float(controls.get("alpha_base", 0.0)))
+                self.beta_base_spin.setValue(float(controls.get("beta_base", 0.0)))
+                self.critical_slope_spin.setValue(float(controls.get("critical_slope_threshold", 0.0)))
+                self.d_xx_spin.setValue(float(controls.get("d_xx", 1.0)))
+                self.d_xy_spin.setValue(float(controls.get("d_xy", 0.0)))
+                self.d_yy_spin.setValue(float(controls.get("d_yy", 1.0)))
+                self.total_time_spin.setValue(float(controls.get("total_time", 1.0)))
+                self.max_timestep_spin.setValue(float(controls.get("max_timestep", 0.1)))
+                self.cfl_spin.setValue(float(controls.get("cfl", 0.25)))
+                self.memory_budget_spin.setValue(float(controls.get("memory_budget_mib", 512)))
+                compute_mode = controls.get("compute_mode", "auto")
+                mode_index = self.compute_mode_combo.findData(compute_mode)
+                if mode_index >= 0:
+                    self.compute_mode_combo.setCurrentIndex(mode_index)
+            self.project_path = Path(path)
+            self.project_label.setText(self.project_path.name)
+            self._refresh_layer_list()
+            self.statusBar().showMessage("Project opened and raster metadata refreshed", 5000)
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            QMessageBox.critical(self, "Could not open project", str(exc))
+
+    def _save_project(self) -> None:
+        path = str(self.project_path) if self.project_path else ""
+        if not path:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save TerraSim project", "", "TerraSim project (*.terrasim.json)"
+            )
+        if not path:
+            return
+        if not path.endswith(".terrasim.json"):
+            path += ".terrasim.json"
+        payload = {
+            "format": "terrasim-project",
+            "version": 2,
+            "layers": self.layers,
+            "model_controls": {
+                "alpha_multiplier": self.alpha_control.multiplier,
+                "beta_multiplier": self.beta_control.multiplier,
+                "alpha_base": self.alpha_base_spin.value(),
+                "beta_base": self.beta_base_spin.value(),
+                "critical_slope_threshold": self.critical_slope_spin.value(),
+                "d_xx": self.d_xx_spin.value(),
+                "d_xy": self.d_xy_spin.value(),
+                "d_yy": self.d_yy_spin.value(),
+                "total_time": self.total_time_spin.value(),
+                "max_timestep": self.max_timestep_spin.value(),
+                "cfl": self.cfl_spin.value(),
+                "memory_budget_mib": self.memory_budget_spin.value(),
+                "compute_mode": self.compute_mode_combo.currentData(),
+                "status": "user supplied or exploratory; coefficients are not yet calibrated",
+            },
+        }
+        try:
+            Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            self.project_path = Path(path)
+            self.project_label.setText(self.project_path.name)
+            self.statusBar().showMessage("Project saved", 5000)
+        except OSError as exc:
+            QMessageBox.critical(self, "Could not save project", str(exc))
+
+    @staticmethod
+    def _stylesheet() -> str:
+        return """
+            QWidget { background: #f4f6f8; color: #18212b; font-size: 10pt; }
+            QMainWindow { background: #f4f6f8; }
+            QMenuBar { background: #ffffff; padding: 6px; }
+            QMenuBar::item { padding: 6px 10px; }
+            QMenu { background: #ffffff; }
+            QStatusBar { background: #ffffff; color: #657181; }
+            #sidebar { background: #14212b; color: #f4f7fa; }
+            #sidebar QLabel { background: transparent; }
+            #brand { color: #ffffff; font-size: 22pt; font-weight: 700; }
+            #eyebrow { color: #8293a1; font-size: 8pt; font-weight: 700; }
+            #sidebar #eyebrow { color: #8ba0af; }
+            #navigation { background: transparent; border: 0; outline: 0; color: #cad4dc; }
+            #navigation::item { padding: 12px; border-radius: 7px; }
+            #navigation::item:selected { background: #28404e; color: white; }
+            #pageTitle { font-size: 19pt; font-weight: 650; }
+            #hero, #panel, #statCard, #notice {
+                background: white; border: 1px solid #e1e6eb; border-radius: 10px;
+            }
+            #hero { background: #eaf2f3; }
+            #heroTitle { font-size: 21pt; font-weight: 650; }
+            #sectionTitle { font-size: 12pt; font-weight: 650; }
+            #statValue { font-size: 20pt; font-weight: 650; color: #1d6b65; }
+            #parameterValue { color: #1d6b65; font-weight: 700; }
+            #muted { color: #637181; }
+            QPushButton {
+                background: white; border: 1px solid #d7dee5; border-radius: 6px;
+                padding: 9px 13px;
+            }
+            QPushButton:hover { background: #edf2f5; }
+            #primaryButton {
+                background: #1d6b65; color: white; border: 0; font-weight: 650;
+            }
+            #primaryButton:hover { background: #185954; }
+            QSlider::groove:horizontal { height: 5px; background: #dfe5e9; border-radius: 2px; }
+            QSlider::sub-page:horizontal { background: #1d6b65; border-radius: 2px; }
+            QSlider::handle:horizontal {
+                background: white; border: 2px solid #1d6b65; width: 14px;
+                margin: -6px 0; border-radius: 8px;
+            }
+            #layerList { background: white; border: 1px solid #e1e6eb; border-radius: 8px; }
+            #rasterPreview {
+                background: #e7ecef; border: 1px solid #d7dee5; border-radius: 6px;
+                color: #637181;
+            }
+        """
+
+
+def main() -> None:
     app = QApplication(sys.argv)
-    
-    # Set application style
-    app.setStyle('Fusion')
-    
-    # Create and show main window
+    app.setStyle("Fusion")
+    app.setFont(QFont("Segoe UI", 10))
     window = TerraSimDesktop()
     window.show()
-    
     sys.exit(app.exec_())
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
+
+
+
+

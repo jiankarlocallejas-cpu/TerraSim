@@ -1,0 +1,379 @@
+"""Tests for the paper-aligned susceptibility and Exner reference model."""
+import numpy as np
+import pytest
+
+from backend.services.paper_model import (
+    ExnerTerrainModel,
+    estimate_reference_memory_bytes,
+    estimate_tiled_memory_bytes,
+    weighted_susceptibility_index,
+)
+
+
+def make_model(**overrides):
+    parameters = {
+        "cell_size_x": 2.0,
+        "cell_size_y": 3.0,
+        "alpha": 0.25,
+        "beta": 0.05,
+        "critical_slope_threshold": 0.02,
+        "diffusion_tensor": ((1.0, 0.0), (0.0, 1.0)),
+        "cfl": 0.25,
+    }
+    parameters.update(overrides)
+    return ExnerTerrainModel(**parameters)
+
+
+def test_flat_terrain_is_stationary_and_has_no_flux_response():
+    model = make_model()
+    result = model.step(np.full((5, 6), 100.0), timestep=1.0)
+
+    assert np.array_equal(result.elevation, np.full((5, 6), 100.0))
+    assert result.max_abs_elevation_change == 0.0
+    assert result.mass_after == pytest.approx(result.mass_before)
+
+
+def test_hill_evolves_and_closed_boundaries_conserve_terrain_volume():
+    elevation = np.zeros((7, 7), dtype=float)
+    elevation[3, 3] = 10.0
+    model = make_model(alpha=0.1, beta=0.1, critical_slope_threshold=0.0)
+    stable_dt = model.stable_timestep(elevation)
+
+    result = model.step(elevation, timestep=stable_dt * 0.5)
+
+    assert result.elevation[3, 3] < elevation[3, 3]
+    assert result.max_abs_elevation_change > 0.0
+    assert result.mass_after == pytest.approx(result.mass_before, abs=1e-12)
+
+
+def test_nodata_cells_are_preserved_and_block_flux():
+    elevation = np.zeros((7, 7), dtype=float)
+    elevation[3, 2] = 2.0
+    elevation[3, 3] = -9999.0
+    model = make_model(alpha=0.1, beta=0.1, critical_slope_threshold=0.0, nodata=-9999.0)
+    stable_dt = model.stable_timestep(elevation)
+    result = model.step(elevation, timestep=stable_dt * 0.5)
+
+    assert result.elevation[3, 3] == -9999.0
+    assert not result.valid_mask[3, 3]
+    assert result.valid_mask.sum() == 48
+    assert result.mass_after == pytest.approx(result.mass_before, abs=1e-12)
+
+
+def test_explicit_step_rejects_timestep_above_stability_limit():
+    model = make_model()
+    elevation = np.arange(25, dtype=float).reshape(5, 5)
+    stable_dt = model.stable_timestep(elevation)
+
+    with pytest.raises(ValueError, match="stability limit"):
+        model.step(elevation, timestep=stable_dt * 1.01)
+
+
+def test_simulation_substeps_to_stability_bound_without_retaining_history():
+    model = make_model()
+    elevation = np.arange(25, dtype=float).reshape(5, 5)
+    stable_dt = model.stable_timestep(elevation)
+    progress = []
+    result = model.simulate(
+        elevation,
+        total_time=stable_dt * 2.25,
+        max_timestep=stable_dt * 0.5,
+        progress=lambda steps, elapsed, dt: progress.append((steps, elapsed, dt)),
+    )
+
+    assert result.elapsed_time == pytest.approx(stable_dt * 2.25)
+    assert result.step_count == len(progress)
+    assert result.step_count >= 5
+    assert result.mass_after == pytest.approx(result.mass_before, abs=1e-10)
+
+
+def test_simulation_in_place_updates_match_explicit_steps_and_preserve_inputs():
+    model = make_model(nodata=-9999.0)
+    rng = np.random.default_rng(17)
+    elevation = rng.normal(size=(12, 13))
+    elevation[3, 4] = -9999.0
+    elevation[8, 7] = np.nan
+    valid_mask = np.ones(elevation.shape, dtype=bool)
+    valid_mask[1, 1] = False
+    original = elevation.copy()
+    progress = []
+
+    result = model.simulate(
+        elevation,
+        total_time=0.13,
+        max_timestep=0.02,
+        valid_mask=valid_mask,
+        progress=lambda steps, elapsed, dt: progress.append((steps, elapsed, dt)),
+    )
+
+    expected = original.copy()
+    expected_max_change = 0.0
+    for _, _, timestep in progress:
+        expected_step = model.step(expected, timestep, valid_mask=valid_mask)
+        expected = expected_step.elevation
+        expected_max_change = max(
+            expected_max_change, expected_step.max_abs_elevation_change
+        )
+
+    assert result.step_count == len(progress)
+    assert result.max_abs_step_change == expected_max_change
+    np.testing.assert_allclose(
+        result.elevation, expected, rtol=0.0, atol=0.0, equal_nan=True
+    )
+    np.testing.assert_allclose(
+        elevation, original, rtol=0.0, atol=0.0, equal_nan=True
+    )
+    assert result.elevation[3, 4] == -9999.0
+    assert np.isnan(result.elevation[8, 7])
+    assert result.elevation[1, 1] == original[1, 1]
+    assert result.mass_after == pytest.approx(result.mass_before, abs=1e-10)
+
+
+@pytest.mark.parametrize("tile_shape", [(3, 4), (5, 7), (32, 32)])
+def test_tiled_simulation_matches_full_grid_across_halos_and_nodata(tile_shape):
+    model = make_model(nodata=-9999.0)
+    rng = np.random.default_rng(23)
+    elevation = rng.normal(size=(12, 13))
+    elevation[2, 3] = -9999.0
+    elevation[9, 8] = np.nan
+    valid_mask = np.ones(elevation.shape, dtype=bool)
+    valid_mask[0, 0] = False
+    original = elevation.copy()
+    settings = {
+        "total_time": 0.08,
+        "max_timestep": 0.02,
+        "valid_mask": valid_mask,
+    }
+
+    full = model.simulate(elevation, **settings)
+    tiled = model.simulate(elevation, tile_shape=tile_shape, **settings)
+
+    assert tiled.step_count == full.step_count
+    assert tiled.elapsed_time == full.elapsed_time
+    assert tiled.min_stable_timestep == pytest.approx(full.min_stable_timestep)
+    assert tiled.mass_after == pytest.approx(tiled.mass_before, abs=1e-10)
+    assert tiled.max_abs_step_change == pytest.approx(
+        full.max_abs_step_change, rel=1e-12, abs=1e-12
+    )
+    np.testing.assert_allclose(
+        tiled.elevation, full.elevation, rtol=1e-12, atol=1e-12, equal_nan=True
+    )
+    np.testing.assert_allclose(
+        elevation, original, rtol=0.0, atol=0.0, equal_nan=True
+    )
+
+
+def test_tiled_simulation_can_cancel_between_tiles_without_partial_step():
+    model = make_model()
+    elevation = np.arange(25, dtype=float).reshape(5, 5)
+    progress = []
+    cancel_calls = 0
+
+    def cancel_after_one_completed_step():
+        nonlocal cancel_calls
+        cancel_calls += 1
+        return cancel_calls >= 31
+
+    result = model.simulate(
+        elevation,
+        total_time=1.0,
+        max_timestep=0.1,
+        tile_shape=(2, 2),
+        progress=lambda steps, elapsed, dt: progress.append((steps, elapsed, dt)),
+        cancel_requested=cancel_after_one_completed_step,
+    )
+
+    assert result.cancelled
+    assert result.step_count == 1
+    assert len(progress) == 1
+    expected = model.step(elevation, timestep=progress[0][2]).elevation
+    np.testing.assert_allclose(
+        result.elevation, expected, rtol=1e-12, atol=1e-12
+    )
+
+
+@pytest.mark.parametrize("tile_shape", [(0, 1), (1, 0), (1,), (1.5, 2)])
+def test_tiled_simulation_rejects_invalid_tile_shapes(tile_shape):
+    model = make_model()
+    elevation = np.zeros((3, 4), dtype=float)
+
+    with pytest.raises(ValueError, match="tile_shape"):
+        model.simulate(
+            elevation,
+            total_time=0.1,
+            max_timestep=0.1,
+            tile_shape=tile_shape,
+        )
+
+
+def test_alpha_threshold_and_beta_control_transport_response():
+    rows, cols = np.mgrid[0:7, 0:7]
+    plane = -0.1 * cols.astype(float)
+
+    below_threshold = make_model(
+        alpha=1.0, beta=0.0, critical_slope_threshold=0.02
+    )
+    assert np.array_equal(
+        below_threshold.step(plane, timestep=1.0).elevation,
+        plane,
+    )
+
+    alpha_active = make_model(
+        alpha=1.0, beta=0.0, critical_slope_threshold=0.001
+    )
+    active_dt = alpha_active.stable_timestep(plane)
+    alpha_result = alpha_active.step(plane, active_dt * 0.5)
+    assert alpha_result.max_abs_elevation_change > 0.0
+
+    beta_active = make_model(
+        alpha=0.0, beta=0.1, critical_slope_threshold=2.0
+    )
+    beta_dt = beta_active.stable_timestep(plane)
+    beta_result = beta_active.step(plane, beta_dt * 0.5)
+    assert beta_result.max_abs_elevation_change > 0.0
+
+
+def test_anisotropic_diffusion_tensor_is_supported():
+    elevation = np.zeros((7, 7), dtype=float)
+    elevation[3, 3] = 5.0
+    model = make_model(
+        alpha=0.0,
+        beta=0.1,
+        critical_slope_threshold=10.0,
+        diffusion_tensor=((2.0, 0.25), (0.25, 1.0)),
+    )
+    dt = model.stable_timestep(elevation)
+    result = model.step(elevation, dt * 0.5)
+
+    assert result.max_abs_elevation_change > 0.0
+    assert result.mass_after == pytest.approx(result.mass_before, abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"cell_size_x": 0.0},
+        {"alpha": -0.1},
+        {"beta": float("inf")},
+        {"critical_slope_threshold": -1.0},
+        {"cfl": 0.0},
+        {"diffusion_tensor": ((1.0, 1.0), (0.0, 1.0))},
+        {"diffusion_tensor": ((1.0, 0.0), (0.0, 0.0))},
+    ],
+)
+def test_model_rejects_invalid_parameters(overrides):
+    with pytest.raises(ValueError):
+        make_model(**overrides)
+
+
+def test_mce_overlay_uses_explicit_normalized_weights_and_preserves_nodata():
+    index = weighted_susceptibility_index(
+        {
+            "rainfall": np.array([[0.0, 1.0], [np.nan, 0.5]]),
+            "soil": np.array([[1.0, 0.0], [0.5, 0.5]]),
+        },
+        {"rainfall": 0.25, "soil": 0.75},
+    )
+
+    assert index[0, 0] == pytest.approx(0.75)
+    assert index[0, 1] == pytest.approx(0.25)
+    assert np.isnan(index[1, 0])
+    assert index[1, 1] == pytest.approx(0.5)
+
+
+def test_mce_overlay_rejects_unproven_normalization_and_weight_sums():
+    with pytest.raises(ValueError, match="sum to 1"):
+        weighted_susceptibility_index(
+            {"a": np.ones((2, 2))}, {"a": 0.5}
+        )
+    with pytest.raises(ValueError, match=r"normalized to \[0, 1\]"):
+        weighted_susceptibility_index(
+            {"a": np.array([[2.0]])}, {"a": 1.0}
+        )
+
+
+def test_mce_overlay_checks_shapes_and_applies_valid_mask():
+    criteria = {"a": np.array([[0.2, 0.3]]), "b": np.array([[0.8, 0.9]])}
+    result = weighted_susceptibility_index(
+        criteria, {"a": 0.5, "b": 0.5}, valid_mask=np.array([[True, False]])
+    )
+
+    assert result[0, 0] == pytest.approx(0.5)
+    assert np.isnan(result[0, 1])
+    with pytest.raises(ValueError, match="different grid shape"):
+        weighted_susceptibility_index(
+            {"a": np.ones((1, 2)), "b": np.ones((2, 1))},
+            {"a": 0.5, "b": 0.5},
+        )
+
+
+
+
+def test_simulation_can_cancel_between_substeps():
+    model = make_model()
+    elevation = np.arange(25, dtype=float).reshape(5, 5)
+    stable_dt = model.stable_timestep(elevation)
+    progress = []
+    result = model.simulate(
+        elevation,
+        total_time=stable_dt * 10,
+        max_timestep=stable_dt * 0.5,
+        progress=lambda steps, elapsed, dt: progress.append((steps, elapsed, dt)),
+        cancel_requested=lambda: len(progress) >= 2,
+    )
+
+    assert result.cancelled
+    assert result.step_count == 2
+    assert result.elapsed_time < stable_dt * 10
+
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "criterion_count", "expected"),
+    [(10, 20, 0, 51200), (10, 20, 2, 57600)],
+)
+def test_reference_memory_estimate(width, height, criterion_count, expected):
+    assert estimate_reference_memory_bytes(width, height, criterion_count) == expected
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "criterion_count", "tile_shape", "expected"),
+    [
+        (1024, 1024, 0, (512, 512), 135270400),
+        (10, 20, 2, (512, 512), 105216),
+    ],
+)
+def test_tiled_memory_estimate(width, height, criterion_count, tile_shape, expected):
+    assert estimate_tiled_memory_bytes(
+        width, height, criterion_count, tile_shape
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "criterion_count", "tile_shape"),
+    [
+        (0, 1, 0, (1, 1)),
+        (1, 0, 0, (1, 1)),
+        (1, 1, -1, (1, 1)),
+        (1, 1, 0, (0, 1)),
+        (1, 1, 0, (1,)),
+    ],
+)
+def test_tiled_memory_estimate_rejects_invalid_dimensions(
+    width, height, criterion_count, tile_shape
+):
+    with pytest.raises(ValueError):
+        estimate_tiled_memory_bytes(width, height, criterion_count, tile_shape)
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "criterion_count"),
+    [(0, 1, 0), (1, 0, 0), (1, 1, -1)],
+)
+def test_reference_memory_estimate_rejects_invalid_dimensions(
+    width, height, criterion_count
+):
+    with pytest.raises(ValueError):
+        estimate_reference_memory_bytes(width, height, criterion_count)
+
+
