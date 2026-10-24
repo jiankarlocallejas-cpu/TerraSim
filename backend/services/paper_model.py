@@ -401,9 +401,9 @@ class ExnerTerrainModel:
         was_cancelled = False
         min_stable_timestep = math.inf
         max_abs_step_change = 0.0
-        next_grid = grid.copy()
-        invalid = np.logical_not(valid)
-        finite = np.empty(grid.shape, dtype=bool)
+        chunk_rows = min(128, grid.shape[0])
+        update_scratch = np.empty((chunk_rows, grid.shape[1]), dtype=np.float64)
+        finite_scratch = np.ones((chunk_rows, grid.shape[1]), dtype=bool)
 
         while elapsed < total_time:
             if cancel_requested is not None and cancel_requested():
@@ -415,17 +415,34 @@ class ExnerTerrainModel:
             step_size = min(max_timestep, stable_timestep, total_time - elapsed)
             if not math.isfinite(step_size) or step_size <= 0.0:
                 raise FloatingPointError("no positive finite timestep is available")
-            np.multiply(divergence, step_size, out=divergence)
-            np.subtract(grid, divergence, out=next_grid, where=valid)
-            np.isfinite(next_grid, out=finite)
-            np.logical_or(finite, invalid, out=finite)
-            if not np.all(finite):
-                raise FloatingPointError("terrain update produced non-finite elevations")
+            step_change = 0.0
+            for row_start in range(0, grid.shape[0], chunk_rows):
+                row_stop = min(row_start + chunk_rows, grid.shape[0])
+                rows = slice(row_start, row_stop)
+                grid_chunk = grid[rows]
+                valid_chunk = valid[rows]
+                divergence_chunk = divergence[rows]
+                chunk_size = row_stop - row_start
+                scratch = update_scratch[:chunk_size]
+                finite = finite_scratch[:chunk_size]
 
-            np.absolute(divergence, out=divergence)
-            step_change = float(np.max(divergence, where=valid, initial=0.0))
+                np.copyto(scratch, grid_chunk)
+                np.multiply(divergence_chunk, step_size, out=divergence_chunk)
+                np.subtract(grid_chunk, divergence_chunk, out=grid_chunk, where=valid_chunk)
+                finite.fill(True)
+                np.isfinite(grid_chunk, out=finite, where=valid_chunk)
+                if not np.all(finite):
+                    raise FloatingPointError(
+                        "terrain update produced non-finite elevations"
+                    )
+
+                np.subtract(grid_chunk, scratch, out=scratch, where=valid_chunk)
+                np.absolute(scratch, out=scratch)
+                chunk_change = float(
+                    np.max(scratch, where=valid_chunk, initial=0.0)
+                )
+                step_change = max(step_change, chunk_change)
             max_abs_step_change = max(max_abs_step_change, step_change)
-            grid, next_grid = next_grid, grid
             step_count += 1
             min_stable_timestep = min(min_stable_timestep, stable_timestep)
             if step_size == total_time - elapsed:
@@ -449,6 +466,9 @@ class ExnerTerrainModel:
             max_abs_step_change=max_abs_step_change,
             cancelled=was_cancelled,
         )
+
+
+
 
 
 
