@@ -11,6 +11,7 @@ from backend.services.raster_inputs import (
     RasterGrid,
     RasterInputError,
     alignment_errors,
+    inspect_geotiff,
     load_geotiff,
     require_aligned,
 )
@@ -36,6 +37,20 @@ def write_memory_raster(crs, transform, values=None, nodata=-9999.0):
     dataset.write(values, 1)
     dataset.close()
     return memory_file
+
+
+def test_inspect_geotiff_reads_metadata_without_grid_pixels():
+    memory_file = write_memory_raster(
+        CRS.from_epsg(32650), from_origin(500000, 1000, 30, 10)
+    )
+    with memory_file:
+        metadata = inspect_geotiff(memory_file.name)
+
+    assert metadata.shape == (2, 3)
+    assert metadata.cell_size_x == pytest.approx(30.0)
+    assert metadata.cell_size_y == pytest.approx(10.0)
+    assert metadata.dtype == "float32"
+    assert metadata.units == "metre"
 
 
 def test_load_metric_geotiff_preserves_rectangular_pixels_and_nodata():
@@ -69,7 +84,7 @@ def test_load_metric_geotiff_preserves_rectangular_pixels_and_nodata():
 def test_rejects_unusable_raster_geometry(crs, transform, message):
     memory_file = write_memory_raster(crs, transform)
     with memory_file, pytest.raises(RasterInputError, match=message):
-        load_geotiff(memory_file.name)
+        inspect_geotiff(memory_file.name)
 
 
 def test_rejects_band_outside_raster():
@@ -77,7 +92,7 @@ def test_rejects_band_outside_raster():
         CRS.from_epsg(32650), from_origin(500000, 1000, 30, 30)
     )
     with memory_file, pytest.raises(RasterInputError, match="contains 1 band"):
-        load_geotiff(memory_file.name, band=2)
+        inspect_geotiff(memory_file.name, band=2)
 
 
 def test_alignment_reports_shape_crs_and_transform_mismatches():
